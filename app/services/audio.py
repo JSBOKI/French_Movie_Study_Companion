@@ -63,11 +63,15 @@ def _dialogue(scene_id: int, lesson: dict) -> Path:
     lines = key_lines(lesson, limit=12)
     gap = silence(0.7, work / "gap-07.mp3")
     for index, line in enumerate(lines):
-        speaker = line.get("speaker")
+        speaker = _drill_speaker(line, index, lesson.get("voice_mode") or "single")
         french = synthesize(line["text"], "fr", speaker=speaker)
-        english = synthesize(line["translation"] or line["text"], "en")
+        english_text = english_for_audio(line)
         pause = silence(_shadow_pause(line["text"]), work / f"pause-{int(_shadow_pause(line['text']) * 10):02d}.mp3")
-        parts.extend([french, pause, english, gap, french, gap])
+        if english_text:
+            english = synthesize(english_text, "en")
+            parts.extend([french, pause, english, gap, french, gap])
+        else:
+            parts.extend([french, pause, french, gap])
     dest = work / "dialogue.mp3"
     if not parts:
         raise ValueError("This scene has no lines to read aloud.")
@@ -92,6 +96,21 @@ def _vocab(scene_id: int, lesson: dict) -> Path:
             parts.extend([example, gap])
     dest = work / "vocab.mp3"
     return concat_mp3(parts, dest)
+
+
+def english_for_audio(line: dict) -> str:
+    """Word-by-word glosses are not spoken. A missing translation is skipped."""
+    if line.get("translation_kind") != "english":
+        return ""
+    return (line.get("translation") or "").strip()
+
+
+def _drill_speaker(line: dict, index: int, mode: str) -> str | None:
+    if line.get("speaker"):
+        return line["speaker"]
+    if mode == "dashes":
+        return "Marc" if index % 2 else "Léa"
+    return None
 
 
 def _shadow_pause(text: str) -> float:

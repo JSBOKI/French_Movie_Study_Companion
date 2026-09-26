@@ -13,7 +13,7 @@ from app.db import one, rows, session
 from app.services.lessons import build_scene_lesson
 from app.services.scenes import split_scenes
 from app.services.subtitles import parse_subtitle
-from app.services.translate import enhance_with_llm
+from app.services.translate import translate_movie
 
 SAMPLE_SRT = ROOT / "sample" / "minuit_ligne_6.srt"
 
@@ -118,7 +118,6 @@ def process_subtitles(movie_id: int, text: str, filename: str) -> None:
             seen_grammar=seen_grammar,
         )
         seen_grammar.update(note["id"] for note in lesson["grammar"])
-        lesson = enhance_with_llm(lesson)
         with session() as conn:
             cur = conn.execute(
                 """
@@ -159,7 +158,7 @@ def process_subtitles(movie_id: int, text: str, filename: str) -> None:
                         now(),
                     ),
                 )
-    _status(movie_id, "ready", f"{total} scenes ready")
+    translate_movie(movie_id, _status)
 
 
 def rebuild(movie_id: int) -> None:

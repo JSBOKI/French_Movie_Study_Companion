@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -154,6 +155,43 @@ OVERRIDES: dict[str, dict] = {
     "bonjour": {"p": "INTJ", "g": "", "e": "hello"},
     "bonsoir": {"p": "INTJ", "g": "", "e": "good evening"},
     "d'accord": {"p": "INTJ", "g": "", "e": "OK, all right"},
+    "rejoindre": {"p": "VERB", "g": "", "e": "to join; to catch up with; to meet again"},
+    "reprendre": {"p": "VERB", "g": "", "e": "to resume; to take again; to take back"},
+    "soumettre": {"p": "VERB", "g": "", "e": "to submit; to put forward; to subject"},
+    "attention": {"p": "NOUN", "g": "f", "e": "attention; care"},
+    "anglais": {"p": "NOUN", "g": "m", "e": "English; English person"},
+    "quelqu'un": {"p": "PRON", "g": "", "e": "someone; somebody"},
+    "pépin": {"p": "NOUN", "g": "m", "e": "snag, hitch; pip, seed"},
+    "type": {"p": "NOUN", "g": "m", "e": "guy; type, kind"},
+    "police": {"p": "NOUN", "g": "f", "e": "the police"},
+    "catastrophe": {"p": "NOUN", "g": "f", "e": "disaster; catastrophe"},
+    "pendule": {"p": "NOUN", "g": "f", "e": "clock"},
+    "manteau": {"p": "NOUN", "g": "m", "e": "coat"},
+    "reflet": {"p": "NOUN", "g": "m", "e": "reflection"},
+    "clinique": {"p": "NOUN", "g": "f", "e": "clinic"},
+    "fantastique": {"p": "ADJ", "g": "", "e": "fantastic; wonderful"},
+    "urgence": {"p": "NOUN", "g": "f", "e": "emergency; urgency"},
+    "urgences": {"p": "NOUN", "g": "f", "e": "the emergency room; emergencies"},
+    "comptabilité": {"p": "NOUN", "g": "f", "e": "accounting; bookkeeping"},
+    "malchance": {"p": "NOUN", "g": "f", "e": "bad luck"},
+    "malchanceux": {"p": "ADJ", "g": "", "e": "unlucky"},
+    "normal": {"p": "ADJ", "g": "", "e": "normal; ordinary"},
+    "dîner": {"p": "NOUN", "g": "m", "e": "dinner; evening meal"},
+    "allô": {"p": "INTJ", "g": "", "e": "hello (on the phone)"},
+    "fascinant": {"p": "ADJ", "g": "", "e": "fascinating"},
+    "ahurissant": {"p": "ADJ", "g": "", "e": "astonishing; mind-boggling"},
+    "psychologue": {"p": "NOUN", "g": "", "e": "psychologist"},
+    "garçon": {"p": "NOUN", "g": "m", "e": "boy"},
+    "forme": {"p": "NOUN", "g": "f", "e": "shape; form"},
+    "entreprise": {"p": "NOUN", "g": "f", "e": "company; business"},
+    "asseoir": {"p": "VERB", "g": "", "e": "to sit; to sit down"},
+    "paraître": {"p": "VERB", "g": "", "e": "to seem; to appear"},
+    "absurde": {"p": "ADJ", "g": "", "e": "absurd"},
+    "inquiéter": {"p": "VERB", "g": "", "e": "to worry"},
+    "laisser": {"p": "VERB", "g": "", "e": "to leave; to let"},
+    "tomber": {"p": "VERB", "g": "", "e": "to fall"},
+    "suppliez": {"p": "VERB", "g": "", "e": "to beg"},
+    "supplier": {"p": "VERB", "g": "", "e": "to beg; to plead"},
 }
 
 CLOSED = {
@@ -372,6 +410,12 @@ def reset_cache() -> None:
     readings_for.cache_clear()
 
 
+_ARCHAIC = re.compile(
+    r"\b(archaic|obsolete|dialectal|dialect|dated|literary|sassenach|advertence|advertency)\b",
+    re.I,
+)
+
+
 def entry(lemma: str) -> dict | None:
     load()
     key = lemma.lower().replace("’", "'")
@@ -379,6 +423,37 @@ def entry(lemma: str) -> dict | None:
         return OVERRIDES[key]
     assert _dict is not None
     return _dict.get(key)
+
+
+def senses(lemma: str, limit: int = 3) -> list[str]:
+    """Up to three everyday meanings. Archaic and placeholder glosses are dropped."""
+    found = entry(lemma)
+    if not found:
+        return []
+    raw = found.get("senses")
+    if isinstance(raw, list):
+        parts = [str(part) for part in raw]
+    else:
+        text = (found.get("e") or "").strip()
+        parts = text.split(";") if ";" in text else text.split(",")
+    cleaned: list[str] = []
+    for part in parts:
+        piece = part.strip().strip(".")
+        if not piece or _ARCHAIC.search(piece):
+            continue
+        if piece.lower() in {"verb", "noun", "adjective", "adverb"}:
+            continue
+        if piece.count("(") > piece.count(")"):
+            piece = re.sub(r"\s*\([^)]*$", "", piece).strip()
+        if piece and piece not in cleaned:
+            cleaned.append(piece)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def gloss(lemma: str) -> str:
+    return "; ".join(senses(lemma))
 
 
 def rank_of(lemma: str, surface: str | None = None) -> int | None:

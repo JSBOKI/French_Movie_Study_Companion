@@ -9,7 +9,7 @@ import httpx
 
 from app import config
 
-UA = "Bobine/1.0 (French film study; educational; contact: local)"
+UA = "Bobine/1.0 (https://github.com/JSBOKI/French_Movie_Study_Companion; educational film study) httpx"
 FILM_WORDS = re.compile(r"\b(film|movie|motion picture|short film|documentary|animated film|cine)\b", re.I)
 REJECT_WORDS = re.compile(r"\b(television series|tv series|episode|album|song|human|person|village|city|commune)\b", re.I)
 
@@ -26,11 +26,20 @@ async def search_films(query: str) -> list[dict]:
                 tmdb = await _tmdb(client, query)
             except httpx.HTTPError:
                 tmdb = []
+        wiki_error = ""
         try:
             wiki = await _wikidata(client, query)
-        except httpx.HTTPError:
+        except httpx.HTTPStatusError as exc:
             wiki = []
-    return _merge(tmdb, wiki)[:8]
+            code = exc.response.status_code
+            wiki_error = f"Wikidata returned {code}. The film search could not run."
+        except httpx.HTTPError as exc:
+            wiki = []
+            wiki_error = f"Wikidata search failed: {exc}"
+    results = _merge(tmdb, wiki)[:8]
+    if not results and wiki_error and not tmdb:
+        raise RuntimeError(wiki_error)
+    return results
 
 
 async def _wikidata(client: httpx.AsyncClient, query: str) -> list[dict]:

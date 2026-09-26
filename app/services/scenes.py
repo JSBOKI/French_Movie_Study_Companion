@@ -12,6 +12,8 @@ SHORT_FILM = 16 * MINUTE
 CLEAR_GAP = 8_000
 SOFT_GAP = 3_500
 MIN_CUES = 3
+MAX_LINES = 40
+TARGET_LINES = 34
 
 
 def split_scenes(cues: list[Cue]) -> list[list[Cue]]:
@@ -21,10 +23,34 @@ def split_scenes(cues: list[Cue]) -> list[list[Cue]]:
     if total <= SHORT_FILM:
         cuts = _clear_breaks(cues)
         if cuts:
-            return _groups(cues, cuts)
-        if total <= 12 * MINUTE:
-            return [cues]
-    return _split_long(cues)
+            scenes = _groups(cues, cuts)
+        elif total <= 12 * MINUTE:
+            scenes = [cues]
+        else:
+            scenes = _split_long(cues)
+    else:
+        scenes = _split_long(cues)
+    return _limit_lines(scenes)
+
+
+def _limit_lines(scenes: list[list[Cue]]) -> list[list[Cue]]:
+    """A beginner lesson stays near 30–40 lines, even inside a long stretch of dialogue."""
+    limited: list[list[Cue]] = []
+    for scene in scenes:
+        if len(scene) <= MAX_LINES:
+            limited.append(scene)
+            continue
+        start = 0
+        while start < len(scene):
+            end = min(len(scene), start + MAX_LINES)
+            if end < len(scene):
+                window = range(start + 18, end)
+                best = max(window, key=lambda i: scene[i].start_ms - scene[i - 1].end_ms, default=end - 1)
+                if scene[best].start_ms - scene[best - 1].end_ms >= SOFT_GAP:
+                    end = best
+            limited.append(scene[start:end])
+            start = end
+    return [scene for scene in limited if scene]
 
 
 def _clear_breaks(cues: list[Cue]) -> list[int]:

@@ -20,10 +20,10 @@ Try **Try the sample short** on the home screen. That loads `sample/minuit_ligne
 
 ## What you can do
 
-1. **Add a film.** Search uses Wikidata and needs no key. You can also type the title yourself. Upload a `.srt`, `.vtt`, or `.ass`/`.ssa` subtitle. The film is split on real pauses in the dialogue, or into stretches of about 8–12 minutes.
-2. **Read a scene.** New words show the dictionary form, noun gender with an article (`le métro`, `la pluie`), and for verbs the infinitive plus the tense, mood, and person in the line. Grammar notes only appear when that pattern is in the scene: passé composé beside imparfait, negation with a dropped *ne*, the subjunctive after *il faut que*, reflexives, contractions, pronoun order, and spoken forms such as *t'as*, *j'sais pas*, *y'a*, and verlan (*chelou*). Tap a word in the dialogue for the gloss. Later scenes do not reteach words or grammar points you have already had, and **I know this** removes a word from future lists and suspends its card.
+1. **Add a film.** Search uses Wikidata and needs no key. You can also type the title yourself. Upload a `.srt`, `.vtt`, or `.ass`/`.ssa` subtitle. The film is split on pauses, then each lesson is kept to about 30–40 lines so a long scene does not become one huge list. The scene title comes from the new nouns in that stretch.
+2. **Read a scene.** New words show the dictionary form, noun gender taken from the article in the line (`un pendule` is a pendulum, `la pendule` is a clock), and verbs as the infinitive. The tense, mood, and person stay on the example, not on the headword. Grammar notes only appear when that pattern is really in the scene: passé composé beside imparfait, negation with a dropped *ne*, the subjunctive after *il faut que*, reflexives, pronoun order, and spoken forms such as *t'as*, *j'sais pas*, and *y'a*. A later scene does not pad its notes back up with everything from scene 1; a repeat is marked **review**, and at most two of those are added. Tap a word for the gloss. **I know this** removes a word from future lists and suspends its card. A suspicious subtitle form is flagged (`possible subtitle typo`) and is not turned into a card.
 3. **Review.** Each new word becomes a card (French with article, English, an example line). Review uses [FSRS](https://github.com/open-spaced-repetition/py-fsrs). Progress is stored in SQLite. Export a film as CSV or an Anki `.apkg` from the film page.
-4. **Listen.** A scene can build two MP3s: a dialogue drill (French, a pause to repeat, English, French again) and a vocabulary drill. Léa is read with `fr-FR-DeniseNeural` and Marc with `fr-FR-HenriNeural`. Lines and words also play from the lesson and from a card. Where it helps, a line carries a short liaison or elision note.
+4. **Listen.** A scene can build two MP3s: a dialogue drill (French, a pause to repeat, English, French again) and a vocabulary drill. Named speakers are split between `fr-FR-DeniseNeural` and `fr-FR-HenriNeural`. A subtitle with no names uses one voice. Dash dialogue alternates the two voices. If a line only has a word-by-word gloss, the drill skips the English instead of reading it aloud. Lines and words also play from the lesson and from a card. Spoken shortcuts such as *t'as* and a real liaison get a short note; a plain apostrophe does not.
 
 ## What works with no API key
 
@@ -35,12 +35,15 @@ Try **Try the sample short** on the home screen. That loads `sample/minuit_ligne
 | Flashcards, FSRS, Anki CSV and `.apkg` | nothing |
 | Sample short | nothing |
 | Line and drill speech | network access to Microsoft Edge voices, no key |
+| French→English line translations | nothing; an Argos model (~80 MB) downloads on first use into `DATA_DIR` |
 | Film posters and richer search | `TMDB_API_KEY` |
 | Search and download French subtitles | `OPENSUBTITLES_API_KEY` |
-| Polished translations and grammar wording | `LLM_API_KEY` |
+| In-context sense picking and a polish of the English | `LLM_API_KEY` |
 | A different speech engine | `TTS_PROVIDER=openai` or `espeak` |
 
-Translations of lines you have not seen before try the free MyMemory service, then a word-by-word gloss. The sample lines are translated locally. The app never bundles copyrighted subtitles.
+Line translations use an offline Argos French→English model. The lesson opens while that runs, with a progress line. The sample lines are already translated, so the short demo does not download the model. If Argos cannot be installed, the app tries MyMemory once and stops after the first quota error (HTTP 429) instead of calling it for every line. A word-by-word gloss is labeled in the lesson, is not saved as a translation, and is not read aloud. The app never bundles copyrighted subtitles.
+
+`sample/huit_cents_repliques.srt` is a longer original practice file (a night at a fictional port clinic, not a commercial film) for trying a full-length subtitle. It uses curly apostrophes, spoken shortcuts, and a few deliberate typos.
 
 ## Optional environment variables
 
@@ -58,12 +61,12 @@ Translations of lines you have not seen before try the free MyMemory service, th
 | `TTS_VOICE_FR_MALE` | `fr-FR-HenriNeural` | Voice for male speaker names |
 | `TTS_VOICE_EN` | `en-US-JennyNeural` | English voice in the drills |
 | `TTS_RATE` | `-8%` | French speaking rate |
-| `DATA_DIR` | `data/user` | SQLite database, audio, and speech cache |
+| `DATA_DIR` | `data/user` | SQLite database, audio, speech cache, and the Argos model |
 | `HOST`, `PORT` | `0.0.0.0`, `8000` | Bind address |
 
 ## Deploying later
 
-Run `python -m app` behind a reverse proxy. Keep a single worker: the database is SQLite. Persist `DATA_DIR` across restarts, and install `ffmpeg`. The server needs outbound network for Wikidata search and for Edge voices. There is no login, so do not put it on the public internet without something in front that restricts who can open it (a private VPN, HTTP auth, or a localhost tunnel).
+Run `python -m app` behind a reverse proxy. Keep a single worker: the database is SQLite. Persist `DATA_DIR` across restarts, and install `ffmpeg`. The server needs outbound network for Wikidata search, for the one-time Argos model download, and for Edge voices. There is no login, so do not put it on the public internet without something in front that restricts who can open it (a private VPN, HTTP auth, or a localhost tunnel).
 
 Dictionary data is a compact FreeDict French–English extract, an OpenSubtitles frequency list, and verb forms generated with verbecc. Sources and licenses are in `app/data/SOURCES.md`.
 

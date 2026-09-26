@@ -176,6 +176,10 @@ def get_scene(movie_id: int, idx: int) -> dict:
     lesson["movie_id"] = movie_id
     movie = one("SELECT title, original_title FROM movies WHERE id = ?", (movie_id,))
     lesson["movie_title"] = movie["title"] if movie else ""
+    fresh = one("SELECT status, progress FROM movies WHERE id = ?", (movie_id,))
+    if fresh:
+        lesson["movie_status"] = fresh["status"]
+        lesson["movie_progress"] = fresh["progress"] or ""
     tracks = rows("SELECT kind FROM audio_tracks WHERE scene_id = ?", (row["id"],))
     lesson["audio"] = [track["kind"] for track in tracks]
     return lesson

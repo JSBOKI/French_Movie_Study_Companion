@@ -22,6 +22,15 @@ EXPRESSIONS = [
     ("tout à l'heure", "tout à l'heure", "a moment ago, or in a little while", "tout à l'heure"),
     ("d'accord", "d'accord", "OK, all right", "d'accord"),
     ("je ne sais pas", "je ne sais pas", "I don't know", "je ne sais pas"),
+    ("s'il vous plaît", "s'il vous plaît", "please (polite)", "s'il vous plaît"),
+    ("tout de même", "tout de même", "all the same, even so", "tout de même"),
+    ("je vous en supplie", "je vous en supplie", "I'm begging you", "je vous en supplie"),
+    ("tandis que", "tandis que", "whereas, while", "tandis que"),
+    ("qu'est-ce que", "qu'est-ce que", "what (question phrase)", "qu'est-ce que"),
+    ("qu'est-ce", "qu'est-ce", "what", "qu'est-ce"),
+    ("quelqu'un", "quelqu'un", "someone", "quelqu'un"),
+    ("faire attention", "faire attention", "to be careful, to pay attention", "faire attention"),
+    ("en pleine forme", "en pleine forme", "in great shape", "en pleine forme"),
 ]
 
 CONTENT = {"NOUN", "VERB", "ADJ", "ADV", "INTJ"}
@@ -43,10 +52,11 @@ def build_scene_lesson(
     overview = _overview(scene_index, vocab, grammar, carried)
     start = cues[0].start_ms
     end = cues[-1].end_ms
+    title = _scene_title(vocab, lines, scene_index)
     lesson = {
         "scene_index": scene_index,
         "scene_count": scene_count,
-        "title": f"Scene {scene_index}",
+        "title": title,
         "time_label": f"{_clock(start)}–{_clock(end)}",
         "start_ms": start,
         "end_ms": end,
@@ -60,9 +70,11 @@ def build_scene_lesson(
                 "title": note.title,
                 "explanation": note.explanation,
                 "examples": note.examples,
+                "review": note.review,
             }
             for note in grammar
         ],
+        "voice_mode": _voice_mode(lines),
         "lines": [_line_json(line) for line in lines],
     }
     cards = [_card(item, scene_index) for item in vocab]
@@ -83,7 +95,7 @@ def _prepare(cue: Cue) -> Line:
 
 def _vocabulary(lines: list[Line], *, taught: set[str], known: set[str]) -> tuple[list[dict], set[str]]:
     buckets: dict[str, dict] = {}
-    for line in lines:
+    for line_index, line in enumerate(lines):
         for tok in line.tokens:
             if not _keep_token(tok):
                 continue
@@ -104,13 +116,19 @@ def _vocabulary(lines: list[Line], *, taught: set[str], known: set[str]) -> tupl
                     "surface": tok.text,
                     "form_note": tok.form_note,
                     "audio": "",
+                    "pronominal": False,
+                    "early": line_index < 4,
                 },
             )
+            if line_index < 4:
+                slot["early"] = True
             slot["count"] += 1
             if tok.form_note and tok.form_note not in slot["forms"]:
                 slot["forms"].append(tok.form_note)
             if tok.gender and not slot["gender"]:
                 slot["gender"] = tok.gender
+            if tok.pronominal:
+                slot["pronominal"] = True
             if _form_rank(tok.form_note) > _form_rank(slot["form_note"]):
                 slot["form_note"] = tok.form_note
                 slot["surface"] = tok.text
@@ -122,10 +140,14 @@ def _vocabulary(lines: list[Line], *, taught: set[str], known: set[str]) -> tupl
         pos = slot["pos"] or found.get("p") or ""
         if pos not in CONTENT:
             continue
-        gloss = found.get("e") or slot["gloss"]
+        # The article in the line wins over a dictionary gender (un pendule, not la pendule).
+        gender = slot["gender"] or found.get("g") or ""
+        if gender and slot.get("gloss"):
+            gloss = slot["gloss"]
+        else:
+            gloss = found.get("e") or slot["gloss"]
         if not gloss:
             continue
-        gender = found.get("g") or slot["gender"]
         slang = found.get("slang") or slot["slang"]
         rank = rank_of(slot["lemma"], slot["surface"])
         level = level_for(rank)
@@ -143,9 +165,12 @@ def _vocabulary(lines: list[Line], *, taught: set[str], known: set[str]) -> tupl
         # Concrete scene words (métro, quai, parapluie) should not lose every tie to tiny function-like verbs.
         if pos == "NOUN" and rank and 1200 <= rank <= 15000:
             score += 22
+        # Nouns in the opening lines are what the scene is about.
+        if pos == "NOUN" and slot.get("early"):
+            score += 36
         if rank:
             score += max(0, 18 - int(rank**0.5) / 8)
-        display, indefinite, audio = _display(slot["lemma"], pos, gender, gloss)
+        display, indefinite, audio = _display(slot["lemma"], pos, gender, gloss, slot.get("pronominal", False))
         ranked.append(
             {
                 "lemma": slot["lemma"],
@@ -166,6 +191,8 @@ def _vocabulary(lines: list[Line], *, taught: set[str], known: set[str]) -> tupl
                 "slang": slang,
                 "score": score,
                 "expression": False,
+                "pronominal": slot.get("pronominal", False),
+                "early": bool(slot.get("early")),
             }
         )
     ranked.sort(key=lambda item: (-item["score"], item["lemma"]))
@@ -202,7 +229,8 @@ def _rescue_scene_nouns(chosen: list[dict], ranked: list[dict]) -> list[dict]:
         for item in ranked
         if item["pos"] == "NOUN" and item["level"] in {"B1", "B2", "C1"} and item["lemma"].lower() not in seen
     ]
-    extras.sort(key=lambda item: -(rank_of(item["lemma"]) or 0))
+    # Opening-line nouns (the métro you just missed) come before rarer leftovers.
+    extras.sort(key=lambda item: (0 if item.get("early") else 1, -(rank_of(item["lemma"]) or 0)))
     for extra in extras[:3]:
         if len(chosen) < 18:
             chosen.append(extra)
@@ -241,11 +269,13 @@ def _form_rank(note: str) -> int:
 
 
 def _keep_token(tok: Tok) -> bool:
-    if not tok.is_word or tok.role in {"punct", "closed", "aux"}:
+    if not tok.is_word or tok.role in {"punct", "closed", "aux", "typo", "propn", "expr"}:
         return False
-    if tok.pos in {"DET", "ADP", "PRON", "CCONJ", "SCONJ", "AUX"}:
+    if tok.typo or tok.pos in {"DET", "ADP", "PRON", "CCONJ", "SCONJ", "AUX", "PROPN", "EXPR"}:
         return False
     if len(tok.lemma) < 2:
+        return False
+    if not tok.gloss or tok.gloss.strip().lower() in {"verb", "noun", "adjective"}:
         return False
     return True
 
@@ -286,13 +316,15 @@ def _expressions(lines: list[Line], taught: set[str], known: set[str]) -> list[d
     return found
 
 
-def _display(lemma: str, pos: str, gender: str | None, gloss: str) -> tuple[str, str, str]:
+def _display(lemma: str, pos: str, gender: str | None, gloss_text: str, pronominal: bool = False) -> tuple[str, str, str]:
     if pos == "NOUN" and gender:
         pair = display_noun(lemma, gender)
         return pair[0], pair[1], pair[0]
     if pos == "VERB":
-        spoken = gloss if gloss.startswith("to ") else f"to {gloss}" if gloss else lemma
-        return lemma, "", lemma
+        head = lemma
+        if pronominal:
+            head = "s'" + lemma if lemma[:1].lower() in "aeiouàâäéèêëîïôöh" else "se " + lemma
+        return head, "", head
     return lemma, "", lemma
 
 
@@ -330,6 +362,7 @@ def _line_json(line: Line) -> dict:
         "translation": line.translation,
         "translation_kind": line.translation_kind,
         "tip": line.tip,
+        "typos": line.typos,
         "tokens": [
             {
                 "text": tok.text,
@@ -341,6 +374,7 @@ def _line_json(line: Line) -> dict:
                 "is_word": tok.is_word,
                 "form_note": tok.form_note,
                 "role": tok.role,
+                "typo": tok.typo or "",
             }
             for tok in line.tokens
         ],
@@ -351,20 +385,57 @@ def _card(item: dict, scene_index: int) -> dict:
     back_bits = [item["gloss"]]
     if item.get("gender_label"):
         back_bits.append(item["gender_label"] + " noun")
-    if item.get("form_note"):
-        back_bits.append(item["form_note"])
+    example_en = item["example_en"]
+    if item.get("pos") == "VERB" and item.get("form_note"):
+        example_en = f"{item['form_note']} — {example_en}" if example_en else item["form_note"]
     return {
         "lemma": item["lemma"],
         "front": item["display"],
         "back": " · ".join(bit for bit in back_bits if bit),
         "example_fr": item["example_fr"],
-        "example_en": item["example_en"],
+        "example_en": example_en,
         "audio_text": item["audio_text"],
         "pos": item["pos"],
         "gender": item.get("gender") or "",
         "level": item.get("level") or "",
         "scene_index": scene_index,
     }
+
+
+def _scene_title(vocab: list[dict], lines: list[Line], index: int) -> str:
+    nouns = [item["display"] for item in vocab if item.get("pos") == "NOUN"]
+    seen = {noun.lower() for noun in nouns}
+    # Later scenes may teach no new nouns. Name them from the dialogue anyway.
+    for line in lines:
+        for tok in line.tokens:
+            if tok.pos != "NOUN" or tok.role == "typo" or not tok.lemma:
+                continue
+            label = display_noun(tok.lemma, tok.gender)[0] if tok.gender else tok.lemma
+            if label.lower() in seen:
+                continue
+            nouns.append(label)
+            seen.add(label.lower())
+            if len(nouns) >= 2:
+                break
+        if len(nouns) >= 2:
+            break
+    nouns = nouns[:2]
+    if len(nouns) >= 2:
+        title = f"{nouns[0]} et {nouns[1]}"
+    elif nouns:
+        title = nouns[0]
+    else:
+        exprs = [item["display"] for item in vocab if item.get("expression")]
+        title = exprs[0] if exprs else f"Scene {index}"
+    return title[:1].upper() + title[1:]
+
+
+def _voice_mode(lines: list[Line]) -> str:
+    if any(line.speaker for line in lines):
+        return "named"
+    if any(line.text.lstrip().startswith(("-", "–", "—")) for line in lines):
+        return "dashes"
+    return "single"
 
 
 def _clock(ms: int) -> str:

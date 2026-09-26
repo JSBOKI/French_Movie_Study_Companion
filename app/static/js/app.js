@@ -67,14 +67,24 @@
 
   let renderToken = 0;
 
+  let lastPath = "";
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+
   async function render() {
     const token = ++renderToken;
+    const pathOnly = (location.hash || "#/").split("?")[0];
+    const pathChanged = pathOnly !== lastPath;
+    lastPath = pathOnly;
     stopPoll();
     state.word = null;
     const { parts, params } = parseRoute();
     const paint = (html) => {
       if (token !== renderToken) return false;
       root.innerHTML = html;
+      if (pathChanged) {
+        window.scrollTo(0, 0);
+        requestAnimationFrame(() => window.scrollTo(0, 0));
+      }
       return true;
     };
     try {
@@ -199,10 +209,10 @@
 
   async function viewFilm(paint, id) {
     const movie = await api(`/api/movies/${id}`);
-    if (movie.status === "processing") {
+    if (movie.status === "processing" || movie.status === "translating") {
       state.poll = setInterval(async () => {
         const fresh = await api(`/api/movies/${id}`);
-        if (fresh.status !== "processing") render();
+        if (fresh.status !== movie.status || fresh.progress !== movie.progress) render();
       }, 900);
     }
     const scenes = (movie.scenes || []).map((scene) => `
@@ -210,7 +220,7 @@
         <span><strong>${esc(scene.title || "Scene " + scene.idx)}</strong><br><span class="meta">${clock(scene.start_ms)}–${clock(scene.end_ms)}</span></span>
         <span class="chip">${scene.studied ? "studied" : "open"}</span>
       </a>`).join("");
-    const banner = movie.status === "processing"
+    const banner = movie.status === "processing" || movie.status === "translating"
       ? `<div class="banner">${esc(movie.progress || "Building lessons…")}</div>`
       : movie.status === "error"
         ? `<div class="banner error">${esc(movie.error || "The subtitle could not be read.")}</div>`
@@ -261,8 +271,8 @@
           ${item.level ? `<span class="chip ${esc(item.level.toLowerCase())}">${esc(item.level)}</span>` : ""}
         </div>
         <div class="en">${esc(item.gloss)}</div>
-        <div class="note">${esc([item.pos_label, item.gender_label, item.form_note].filter(Boolean).join(" · "))}</div>
-        ${item.example_fr ? `<p class="example" lang="fr">${esc(item.example_fr)}<span>${esc(item.example_en || "")}</span></p>` : ""}
+        <div class="note">${esc([item.pos_label, item.gender_label, item.pos === "VERB" ? "" : item.form_note].filter(Boolean).join(" · "))}</div>
+        ${item.example_fr ? `<p class="example" lang="fr">${esc(item.example_fr)}<span>${esc(item.pos === "VERB" && item.form_note ? item.form_note + " — " : "")}${esc(item.example_en || "")}</span></p>` : ""}
         <div class="row" style="margin-top:8px">
           <button class="btn-tiny" data-action="speak" data-text="${esc(item.audio_text || item.display)}" data-lang="fr">Hear it</button>
           <button class="btn-tiny" data-action="known" data-lemma="${esc(item.lemma)}">I know this</button>
@@ -270,7 +280,7 @@
       </article>`).join("");
     const grammar = (lesson.grammar || []).map((note) => `
       <article class="panel grammar">
-        <h3>${esc(note.title)}</h3>
+        <h3>${esc(note.title)} ${note.review ? `<span class="chip">review</span>` : ""}</h3>
         <p>${esc(note.explanation)}</p>
         ${(note.examples || []).slice(0, 2).map((ex) => `
           <p class="ex"><em lang="fr">${esc(ex.fr)}</em><br><span class="meta">${esc(ex.en || "")}</span></p>`).join("")}
@@ -282,10 +292,15 @@
           <span>${clock(line.start_ms)}</span>
         </header>
         <p class="dialogue" lang="fr">${tokensHtml(line.tokens, lineIndex)}</p>
-        <p class="translation">${esc(line.translation || "")}</p>
+        ${translationHtml(line)}
+        ${(line.typos || []).map((note) => `<p class="tip">${esc(note)}</p>`).join("")}
         ${line.tip ? `<p class="tip">${esc(line.tip)}</p>` : ""}
         <button class="btn-tiny" data-action="speak" data-text="${esc(line.text)}" data-lang="fr" data-speaker="${esc(line.speaker || "")}">Play line</button>
       </article>`).join("");
+    const pending = (lesson.lines || []).some((line) => line.translation_kind === "pending") || lesson.movie_status === "translating";
+    if (pending) {
+      state.poll = setInterval(() => render(), 1200);
+    }
     const audioReady = new Set(lesson.audio || []);
     const prev = idx > 1 ? `<a class="btn-ghost" href="#/film/${movieId}/scene/${idx - 1}">Previous</a>` : "";
     const next = idx < lesson.scene_count ? `<a class="btn-ghost" href="#/film/${movieId}/scene/${idx + 1}">Next scene</a>` : "";
@@ -293,6 +308,7 @@
     if (!paint(shell(lesson.title, `
       <p class="meta"><a href="#/film/${movieId}">${esc(lesson.movie_title)}</a> · ${esc(lesson.time_label || "")}</p>
       <h1>${esc(lesson.title)} <span class="meta">of ${lesson.scene_count}</span></h1>
+      ${lesson.movie_status === "translating" ? `<div class="banner">${esc(lesson.movie_progress || "Translating the dialogue…")}</div>` : ""}
       <p class="lede">${esc(lesson.overview || "")}</p>
       <div class="row" style="margin-bottom:14px">
         ${prev}${next}
@@ -314,7 +330,7 @@
           <div class="script">${lines}</div>
           <section class="panel audio-box" id="audio">
             <h2>Listen and shadow</h2>
-            <p>Each drill speaks a French line, leaves a pause so you can repeat it, gives the English, then says the French again. Léa uses Denise, Marc uses Henri. No API key: these are Edge neural voices, and the machine needs a network.</p>
+            <p>${esc(voiceBlurb(lesson.voice_mode))} The English is spoken only when it is a real sentence, not a word-by-word gloss. No API key: these are Edge neural voices, and the machine needs a network.</p>
             <div class="row">
               <button class="btn" data-action="audio" data-scene="${lesson.id}" data-kind="dialogue" ${state.busy === "dialogue" ? "disabled" : ""}>${audioReady.has("dialogue") ? "Rebuild dialogue MP3" : "Build dialogue MP3"}</button>
               <button class="btn-quiet" data-action="audio" data-scene="${lesson.id}" data-kind="vocab" ${state.busy === "vocab" ? "disabled" : ""}>${audioReady.has("vocab") ? "Rebuild vocab MP3" : "Build vocab MP3"}</button>
@@ -327,6 +343,26 @@
       </div>
     `, "films"))) return;
     root.dataset.lesson = JSON.stringify({ movieId, idx });
+  }
+
+  function translationHtml(line) {
+    if (line.translation_kind === "gloss") {
+      return `<p class="translation"><span class="chip">word-by-word</span> ${esc(line.translation || "")}</p>`;
+    }
+    if (line.translation_kind === "pending" || !line.translation) {
+      return `<p class="translation">Translation coming…</p>`;
+    }
+    return `<p class="translation">${esc(line.translation)}</p>`;
+  }
+
+  function voiceBlurb(mode) {
+    if (mode === "named") {
+      return "Named speakers are split between Denise and Henri. A name that is not clearly male uses Denise.";
+    }
+    if (mode === "dashes") {
+      return "This subtitle marks speakers with dashes, so the voices alternate: Denise, then Henri.";
+    }
+    return "This subtitle has no speaker names, so the drill uses one French voice, Denise.";
   }
 
   function trackPlayer(sceneId, kind, ready) {

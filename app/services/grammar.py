@@ -25,6 +25,7 @@ class Note:
     explanation: str
     examples: list[dict] = field(default_factory=list)
     priority: int = 50
+    review: bool = False
 
 
 def _ex(line: Line, note: str = "") -> dict:
@@ -90,9 +91,12 @@ def detect_grammar(lines: list[Line], already_seen: set[str] | None = None) -> l
             has_plus = bool(re.search(r"\bplus\b", clause)) and bool(
                 re.search(r"n'|ne |y'a plus|a plus|plus de|plus personne", clause)
             )
+            bare = re.fullmatch(r"pas du tout", clause.strip(" .!?"))
+            if bare:
+                continue
             if (has_pas or has_plus) and has_ne:
                 full.append(line)
-            elif has_pas or (has_plus and not has_ne):
+            elif (has_pas or (has_plus and not has_ne)) and _has_verb(line):
                 dropped.append(line)
     if dropped or full:
         bits = [
@@ -166,8 +170,18 @@ def detect_grammar(lines: list[Line], already_seen: set[str] | None = None) -> l
             )
         )
 
-    if any(re.search(r"\b(du|au|aux)\b|\bd'|\bl'", _low(line)) for line in lines):
-        sample = next(line for line in lines if re.search(r"\b(du|au|aux)\b|\bd'", _low(line)))
+    contraction = re.compile(r"\b(du|au|aux)\b|\bd'|\bl'")
+
+    def _shows_contraction(line: Line) -> bool:
+        low = _low(line).strip(" .!?…")
+        # « pas du tout » is a fixed answer, not de + le.
+        if low == "pas du tout":
+            return False
+        return bool(contraction.search(_low(line)))
+
+    contraction_lines = [line for line in lines if _shows_contraction(line)]
+    if contraction_lines:
+        sample = contraction_lines[0]
         notes.append(
             Note(
                 id="contractions",
@@ -439,10 +453,13 @@ def detect_grammar(lines: list[Line], already_seen: set[str] | None = None) -> l
     seen = already_seen or set()
     fresh = [note for note in notes if note.id not in seen]
     repeated = [note for note in notes if note.id in seen]
-    # Later scenes prefer grammar that has not already been taught.
-    chosen = fresh[:9]
-    if len(chosen) < 4:
-        chosen.extend(repeated[: 9 - len(chosen)])
+    # New patterns only. A later scene may add at most two already-taught notes, marked as review.
+    chosen = fresh[:6]
+    if len(chosen) < 2:
+        for note in repeated[:2]:
+            note.review = True
+            note.title = "Review: " + note.title
+            chosen.append(note)
     return chosen
 
 
@@ -477,9 +494,21 @@ def _reflexive(line: Line) -> bool:
 
 
 def _object_pronoun(line: Line) -> bool:
-    return any(tok.role == "closed" and tok.pos == "PRON" and tok.gloss.startswith(("him", "her", "them", "you", "me")) for tok in line.tokens) or bool(
-        re.search(r"\b(m'en|t'en|s'en)\b|\bon y\b", _low(line))
-    )
+    """A real object pronoun, not the subject tu/vous whose gloss also starts with you."""
+    objects = {"me", "te", "se", "m'", "t'", "s'", "lui", "leur", "en", "y"}
+    for tok in line.tokens:
+        low = tok.text.lower().replace("’", "'")
+        if "object pronoun" in (tok.form_note or ""):
+            return True
+        if low in objects and tok.pos == "PRON":
+            return True
+        if low.startswith("-") and low in {"-le", "-la", "-les", "-lui", "-leur", "-moi", "-toi", "-en", "-y"}:
+            return True
+    return bool(re.search(r"\b(m'en|t'en|s'en)\b|\bon y\b", _low(line)))
+
+
+def _has_verb(line: Line) -> bool:
+    return any(tok.role in {"verb", "aux", "participle"} or tok.pos == "VERB" for tok in line.tokens)
 
 
 def _futur_proche(line: Line) -> bool:

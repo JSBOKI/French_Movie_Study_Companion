@@ -54,8 +54,9 @@ def test_spoken_french_and_pronunciation_tips():
     assert tip and "tu as" in tip
     liaison = line_tip("On est amis.")
     assert liaison and "Liaison" in liaison
-    elision = line_tip("J'habite loin d'ici.")
-    assert elision and "Elision" in elision
+    # A plain apostrophe is ordinary elision, not a tip on every line.
+    assert line_tip("J'habite loin d'ici.") is None
+    assert line_tip("les amis arrivent") and "Liaison" in line_tip("les amis arrivent")
 
 
 def test_sample_lessons_cards_and_export(client):
