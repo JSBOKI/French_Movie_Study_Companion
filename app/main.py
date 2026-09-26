@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -18,6 +20,95 @@ STATIC = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="Bobine", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+_COOKIE = "bobine_session"
+_COOKIE_MAX_AGE = 180 * 24 * 3600
+_OPEN_PATHS = {"/api/health", "/login"}
+
+
+def _session_token(password: str) -> str:
+    return hmac.new(b"bobine-session-v1", password.encode(), hashlib.sha256).hexdigest()
+
+
+def _authorized(request: Request) -> bool:
+    password = config.app_password()
+    if not password:
+        return True
+    got = request.cookies.get(_COOKIE, "")
+    expected = _session_token(password)
+    if len(got) != len(expected):
+        return False
+    return hmac.compare_digest(got, expected)
+
+
+@app.middleware("http")
+async def require_password(request: Request, call_next):
+    path = request.url.path
+    if path in _OPEN_PATHS or path.startswith("/static/") or _authorized(request):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Sign in required."}, status_code=401)
+    return RedirectResponse("/login", status_code=303)
+
+
+def _login_page(error: str = "") -> HTMLResponse:
+    message = f'<p class="tip">{error}</p>' if error else ""
+    body = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Bobine — Sign in</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <main class="wrap" style="max-width:28rem;padding-top:12vh">
+    <h1>Bobine</h1>
+    <p class="lede">Enter the password for this copy of the app.</p>
+    <form class="panel" method="post" action="/login">
+      {message}
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" autofocus required style="font-size:1.25rem;min-height:3.2rem">
+      <p><button class="btn" type="submit" style="font-size:1.15rem;min-height:3.2rem;padding:12px 22px">Continue</button></p>
+    </form>
+  </main>
+</body>
+</html>"""
+    return HTMLResponse(body)
+
+
+@app.get("/login")
+def login_form() -> Response:
+    if not config.app_password():
+        return RedirectResponse("/", status_code=303)
+    return _login_page()
+
+
+def _password_matches(given: str, expected: str) -> bool:
+    if len(given) != len(expected):
+        return False
+    return hmac.compare_digest(given.encode(), expected.encode())
+
+
+@app.post("/login")
+def login_submit(request: Request, password: str = Form("")) -> Response:
+    expected = config.app_password()
+    if not expected:
+        return RedirectResponse("/", status_code=303)
+    if not _password_matches(password, expected):
+        return _login_page("That password does not match.")
+    response = RedirectResponse("/", status_code=303)
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
+    response.set_cookie(
+        _COOKIE,
+        _session_token(expected),
+        max_age=_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=secure,
+        path="/",
+    )
+    return response
 
 
 @app.on_event("startup")
@@ -222,7 +313,7 @@ def set_known(payload: KnownIn) -> dict:
 @app.get("/api/review/next")
 def review_next(movie_id: int | None = None, scene_id: int | None = None) -> dict:
     card = srs.next_card(movie_id, scene_id)
-    return {"card": card, "stats": srs.stats(movie_id)}
+    return {"card": card, "stats": srs.stats(movie_id, scene_id)}
 
 
 @app.post("/api/review/{card_id}")

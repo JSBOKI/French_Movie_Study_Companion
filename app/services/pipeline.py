@@ -13,7 +13,7 @@ from app.db import one, rows, session
 from app.services.lessons import build_scene_lesson
 from app.services.scenes import split_scenes
 from app.services.subtitles import parse_subtitle
-from app.services.translate import translate_movie
+from app.services.translate import clear_cached_translations, translate_movie
 
 SAMPLE_SRT = ROOT / "sample" / "minuit_ligne_6.srt"
 
@@ -165,6 +165,7 @@ def rebuild(movie_id: int) -> None:
     movie = one("SELECT subtitle_text, subtitle_name FROM movies WHERE id = ?", (movie_id,))
     if not movie or not movie["subtitle_text"]:
         raise ValueError("This film has no subtitle to rebuild from.")
+    clear_cached_translations()
     start_processing(movie_id, movie["subtitle_text"], movie["subtitle_name"] or "subtitles.srt")
 
 

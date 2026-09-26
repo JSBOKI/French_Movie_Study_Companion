@@ -37,13 +37,20 @@ def next_card(movie_id: int | None = None, scene_id: int | None = None) -> dict 
     return _public(due[0], remaining=len(due))
 
 
-def stats(movie_id: int | None = None) -> dict:
-    due = _due_rows(movie_id, None)
+def stats(movie_id: int | None = None, scene_id: int | None = None) -> dict:
+    due = _due_rows(movie_id, scene_id)
     sql = "SELECT fsrs_json, suspended FROM cards"
-    params: tuple = ()
+    clauses: list[str] = []
+    params_list: list = []
     if movie_id:
-        sql += " WHERE movie_id = ?"
-        params = (movie_id,)
+        clauses.append("movie_id = ?")
+        params_list.append(movie_id)
+    if scene_id:
+        clauses.append("scene_id = ?")
+        params_list.append(scene_id)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    params: tuple = tuple(params_list)
     all_rows = rows(sql, params)
     upcoming = None
     now = datetime.now(timezone.utc)

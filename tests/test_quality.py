@@ -151,7 +151,7 @@ def test_subtitle_typos_are_flagged_and_not_taught():
         "Le bateau est sur la mère.": "mer (the sea)",
         "Je l’ai pas lâcher.": "lâché",
         "J’ai passez la journée ici.": "passé",
-        "Les marchants arrivent.": "marchant",
+        "Les marchants arrivent.": "marchands",
         "Ça m’arrivé souvent.": "m'arrive",
     }
     for text, guess in expectations.items():
@@ -353,10 +353,10 @@ def test_typo_guesses_and_corrected_french():
     promised = analyze_line(None, 0, 1000, "Je ferais attention demain.")
     assert any("ferai" in note for note in promised.typos)
     assert promised.corrected_text == "Je ferai attention demain."
+    assert any(tok.lemma == "faire attention (à)" for tok in promised.tokens)
     genuine = analyze_line(None, 0, 1000, "Je ferais attention.")
     assert not genuine.typos
-    verb = next(tok for tok in genuine.tokens if tok.lemma == "faire")
-    assert verb.reading and verb.reading.mood == "cond"
+    assert any(tok.lemma == "faire attention (à)" for tok in genuine.tokens)
 
 
 def test_imperative_without_ne_and_context_pos():
@@ -593,6 +593,145 @@ def test_typo_lines_are_translated_from_the_correction(monkeypatch):
     assert "about 2 min" in lesson["time_label"] or "about 1 min" in lesson["time_label"]
 
 
+def _reading(text: str, surface: str):
+    _line, tok = _tok(text, surface)
+    assert tok.reading, (text, surface, tok.form_note, tok.pos, tok.lemma)
+    return tok.reading
+
+
+def test_regressions_gender_idioms_and_cache():
+    # A real infinitive after à/de/pour/sans or a modal is not a typo.
+    for text in (
+        "J'avais qu'à la ranger.",
+        "Il faut la réveiller.",
+        "Je vais passer.",
+        "C'est pour passer.",
+        "Il part sans réveiller.",
+        "J'avais qu'à la réveiller.",
+    ):
+        assert not analyze_line(None, 0, 1000, text).typos, text
+    kept = analyze_line(None, 0, 1000, "Je l'ai pas lâcher.")
+    assert any("lâché" in note for note in kept.typos)
+
+    merchants = analyze_line(None, 0, 1000, "Les marchants arrivent.")
+    assert any("marchands" in note for note in merchants.typos)
+    assert merchants.corrected_text == "Les marchands arrivent."
+    de_merchants = analyze_line(None, 0, 1000, "Il parle de marchants.")
+    assert any("marchands" in note for note in de_merchants.typos)
+    assert not analyze_line(None, 0, 1000, "Ce sont des plans mouvants.").typos
+
+    dashed = analyze_line(None, 0, 1000, "- J'ai une chambre sur la mère.")
+    assert dashed.corrected_text == "- J'ai une chambre sur la mer."
+    assert " -" not in dashed.corrected_text.replace("- J'", "")
+
+    for text, surface in (
+        ("Vous voulez pas venir.", "voulez"),
+        ("si vous êtes pas là.", "êtes"),
+        ("Vous allez pas partir.", "allez"),
+        ("Vous vous reposez jamais ?", "reposez"),
+        ("Si vous vous sentez mal.", "sentez"),
+        ("Vous pouvez pas entrer.", "pouvez"),
+    ):
+        reading = _reading(text, surface)
+        assert reading.mood != "imp", (text, reading)
+        assert (reading.person, reading.number) == ("2", "p"), (text, reading)
+    future = _reading("vous en aurez besoin.", "aurez")
+    assert future.mood != "imp"
+    assert future.tense == "fut"
+    assert (future.person, future.number) == ("2", "p")
+    worry = _reading("Non t'inquiète pas.", "inquiète")
+    assert worry.mood == "imp" and worry.number == "s"
+
+    arrive = _reading("qu'il vous arrive malheur.", "arrive")
+    assert arrive.person == "3"
+    governed = _reading("Il faut qu'il vous arrive malheur.", "arrive")
+    assert governed.person == "3" and governed.mood == "sub"
+    assert _reading("pour qu'il se passe quelque chose.", "passe").person == "3"
+    assert _reading("qu'ils vous disent la vérité.", "disent").person == "3"
+    watch = _reading("Tout le monde vous regarde.", "regarde")
+    assert watch.person == "3" and watch.lemma == "regarder"
+
+    earth = analyze_line(None, 0, 1000, "terre de contrastes.")
+    terre = next(tok for tok in earth.tokens if tok.text.lower() == "terre")
+    contrast = next(tok for tok in earth.tokens if "contrast" in tok.text.lower())
+    assert terre.pos == "NOUN" and terre.lemma != "terrer"
+    assert contrast.pos == "NOUN" and "contraster" not in (contrast.lemma or "")
+    fear = next(tok for tok in analyze_line(None, 0, 1000, "sans crainte.").tokens if tok.text.lower() == "crainte")
+    assert fear.pos == "NOUN" and fear.lemma == "crainte"
+    assert not gloss("suite").lower().startswith("train")
+    assert "rest" in gloss("suite") or "follows" in gloss("suite")
+
+    station = _lesson("Le nez saigne.", "Il va au commissariat.")[0]["title"].lower()
+    assert "le commissariat" in station
+    assert "la commissariat" not in station
+    girl = next(card for card in _lesson("Le fille arrive.")[1] if card["lemma"] == "fille")
+    assert girl["front"] == "la fille"
+    wasp = next(card for card in _lesson("Un guêpe vole.")[1] if card["lemma"] == "guêpe")
+    assert wasp["front"] == "la guêpe"
+    agency = next(card for card in _lesson("L'agence ferme.")[1] if card["lemma"] == "agence")
+    assert agency["gender"] == "f"
+    assert "feminine" in agency["back"]
+    pendulum = next(card for card in _lesson("C'est un pendule.")[1] if card["lemma"] == "pendule")
+    clock = next(card for card in _lesson("La pendule sonne.")[1] if card["lemma"] == "pendule")
+    assert pendulum["gender"] == "m"
+    assert clock["gender"] == "f"
+
+    titled = _lesson("Putain de merde.", "Le train part.", "La porte ferme.")[0]["title"].lower()
+    assert "merde" not in titled and "putain" not in titled
+
+    lesson, _cards = _lesson("Le train est sur la mère.", "Le train part.")
+    train = next(item for item in lesson["vocabulary"] if item["lemma"] == "train")
+    assert train["example_fr"] == "Le train part."
+
+    points = _lesson("Il faut que tu partes.", "Ne me laissez pas tomber.")[0]
+    assert points["grammar_points"]
+    assert all(point not in points["overview"] for point in points["grammar_points"])
+    assert "You'll work on " in points["overview"]
+
+    from app.services.translate import note_future_spelling
+
+    later = {
+        "text": "Je ferais attention.",
+        "corrected_text": "Je ferais attention.",
+        "translation": "I'll be careful.",
+        "translation_kind": "english",
+        "typos": [],
+    }
+    note_future_spelling(later)
+    assert any("ferai" in note for note in later["typos"])
+    assert later["translation"] == "I'll be careful."
+    assert later["corrected_text"] == "Je ferai attention."
+    conditional = {
+        "text": "Je ferais attention.",
+        "corrected_text": "Je ferais attention.",
+        "translation": "I would be careful.",
+        "translation_kind": "english",
+        "typos": [],
+    }
+    note_future_spelling(conditional)
+    assert conditional["typos"] == []
+    assert conditional["corrected_text"] == "Je ferais attention."
+
+    assert polish_translation("On est paumé.", "We're broke.") == "We're lost."
+    assert polish_translation("On est paumé dans la ville.", "We're broke in the city.") == "We're lost in the city."
+    assert "cut off" in polish_translation("On a été coupé.", "We've been cut.").lower()
+    assert polish_translation("Appelez-moi vite.", "Call me quickly.") == "Call me soon."
+    assert polish_translation("Hé bien, voilà.", "Hey well, there it is.").startswith("Well")
+
+    from app.services.offline_translate import translate_batch, translation_sane
+    from app.services.translate import _store, clear_cached_translations
+
+    assert not translation_sane("Elle va se coucher.", "she's going to bed Classes")
+    assert translation_sane("Il part au Mexique.", "He is leaving for Mexico.")
+    assert not translation_sane("Bonjour.", "")
+    _store("Elle va se coucher.", "she's going to bed Classes", "argos")
+    assert one("SELECT target FROM translations WHERE source = ?", ("Elle va se coucher.",)) is None
+    _store("Bonjour.", "Hello.", "argos")
+    assert one("SELECT target FROM translations WHERE source = ?", ("Bonjour.",))["target"] == "Hello."
+    clear_cached_translations()
+    assert one("SELECT source FROM translations") is None
+
+
 def test_long_original_subtitle_shape():
     path = ROOT / "sample" / "huit_cents_repliques.srt"
     text = path.read_text(encoding="utf-8")
@@ -605,3 +744,109 @@ def test_long_original_subtitle_shape():
     scenes = split_scenes(cues)
     assert all(3 <= len(scene) <= 40 for scene in scenes)
     assert len(scenes) >= 15
+
+
+def test_garbage_output_is_retried_and_serialized(monkeypatch):
+    import threading
+    import time
+
+    from app.services.offline_translate import translate_batch
+
+    answers = iter(["she's going to bed Classes", "She is going to bed."])
+    monkeypatch.setattr("app.services.offline_translate.ensure_model", lambda: True)
+    monkeypatch.setattr("app.services.offline_translate._translate_one", lambda _text: next(answers))
+    assert translate_batch(["Elle va se coucher."]) == ["She is going to bed."]
+
+    again = iter(["she's going to bed Classes", "still Classes here"])
+    monkeypatch.setattr("app.services.offline_translate._translate_one", lambda _text: next(again))
+    assert translate_batch(["Elle va se coucher."]) == [""]
+
+    state = {"inside": 0, "max": 0}
+    gate = threading.Lock()
+
+    def fake(_text: str) -> str:
+        with gate:
+            state["inside"] += 1
+            state["max"] = max(state["max"], state["inside"])
+        time.sleep(0.02)
+        with gate:
+            state["inside"] -= 1
+        return "Hello."
+
+    monkeypatch.setattr("app.services.offline_translate._translate_one", fake)
+    threads = [threading.Thread(target=lambda: translate_batch(["Un.", "Deux."])) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert state["max"] == 1
+
+
+def test_rebuild_clears_cached_translations(monkeypatch):
+    from app.db import session
+    from app.services.pipeline import create_movie, rebuild
+    from app.services.translate import _store
+
+    movie = create_movie({"title": "Cache", "year": 2024})
+    with session() as conn:
+        conn.execute(
+            "UPDATE movies SET subtitle_text = ?, subtitle_name = ? WHERE id = ?",
+            ("1\n00:00:01,000 --> 00:00:03,000\nIl pleuvait.\n", "cache.srt", movie["id"]),
+        )
+    _store("Bonjour tout le monde.", "Hello everyone.", "argos")
+    assert one("SELECT source FROM translations WHERE source = ?", ("Bonjour tout le monde.",))
+    monkeypatch.setattr("app.services.pipeline.start_processing", lambda *_args, **_kwargs: None)
+    rebuild(movie["id"])
+    assert one("SELECT source FROM translations") is None
+
+
+def test_scene_review_count_is_the_scene(client):
+    from fsrs import Card
+
+    from app.db import session
+    from app.services.pipeline import create_movie
+    from app.services.srs import stats
+
+    movie = create_movie({"title": "Due counts", "year": 2024})
+    payload = Card().to_json()
+    with session() as conn:
+        first = conn.execute(
+            "INSERT INTO scenes (movie_id, idx, start_ms, end_ms, title, studied) VALUES (?, 1, 0, 1000, 'Un', 0)",
+            (movie["id"],),
+        ).lastrowid
+        second = conn.execute(
+            "INSERT INTO scenes (movie_id, idx, start_ms, end_ms, title, studied) VALUES (?, 2, 2000, 3000, 'Deux', 0)",
+            (movie["id"],),
+        ).lastrowid
+        for scene_id, lemma in ((first, "train"), (first, "porte"), (second, "mer")):
+            conn.execute(
+                """
+                INSERT INTO cards
+                    (movie_id, scene_id, lemma, front, back, example_fr, example_en, audio_text, pos, gender, level, fsrs_json, suspended, created_at)
+                VALUES (?, ?, ?, ?, 'word', '', '', ?, 'NOUN', 'm', 'A1', ?, 0, '2024-01-01')
+                """,
+                (movie["id"], scene_id, lemma, lemma, lemma, payload),
+            )
+    assert stats(movie["id"], first)["due"] == 2
+    assert stats(movie["id"])["due"] == 3
+    body = client.get(f"/api/review/next?movie_id={movie['id']}&scene_id={first}").json()
+    assert body["stats"]["due"] == 2
+    assert body["card"]["scene_id"] == first
+
+
+def test_password_cookie_when_configured(client, monkeypatch):
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/movies").status_code == 200
+    monkeypatch.setenv("APP_PASSWORD", "correct horse")
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/movies").status_code == 401
+    page = client.get("/", follow_redirects=False)
+    assert page.status_code == 303
+    assert page.headers["location"] == "/login"
+    bad = client.post("/login", data={"password": "nope"})
+    assert bad.status_code == 200
+    assert "does not match" in bad.text
+    good = client.post("/login", data={"password": "correct horse"}, follow_redirects=False)
+    assert good.status_code == 303
+    assert client.get("/api/movies").status_code == 200
+    assert client.get("/login", follow_redirects=False).status_code == 200

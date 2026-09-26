@@ -75,6 +75,8 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 640; letter-spacing: -0.03e
 h1 { font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.05; }
 h2 { font-size: 1.55rem; }
 .lede { color: var(--muted); max-width: 40rem; margin: 0 0 1.2rem; font-size: 1.05rem; }
+.point-list { margin: -0.4rem 0 1.2rem; padding-left: 1.2rem; max-width: 40rem; }
+.point-list li { margin: 0.25rem 0; }
 
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .btn, .btn-quiet, .btn-ghost {
@@ -127,7 +129,7 @@ h2 { font-size: 1.55rem; }
   box-shadow: var(--shadow); margin-bottom: 14px;
 }
 label { display: block; font-weight: 700; margin: 10px 0 4px; }
-input[type="text"], input[type="number"], input[type="search"], textarea {
+input[type="text"], input[type="number"], input[type="search"], input[type="password"], textarea {
   width: 100%; border: 1px solid var(--line); background: #fff; border-radius: 12px;
   padding: 12px 12px; 
 }

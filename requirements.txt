@@ -7,5 +7,5 @@ edge-tts>=6.1
 fsrs>=6.0
 genanki>=0.13
 pytest>=8.0
-argostranslate>=1.9
+sentencepiece>=0.2
 ctranslate2>=4.0

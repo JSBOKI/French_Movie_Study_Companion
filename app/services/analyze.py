@@ -63,7 +63,7 @@ NUMBER_DET = {
 # Words that can sit in front of a command without making it a statement.
 DISCOURSE = {
     "non", "oui", "alors", "bon", "ben", "eh", "hé", "he", "oh", "allez",
-    "mais", "donc", "euh", "bah", "hein", "voyons", "si",
+    "mais", "donc", "euh", "bah", "hein", "voyons",
 }
 _FUTURE_PROMISE = re.compile(
     r"\b(demain|bientôt|bientot|ce soir|cette nuit|plus tard|tout à l'heure|tout a l'heure|"
@@ -197,6 +197,7 @@ class Tok:
     reading: Reading | None = None
     slang: str | None = None
     typo: str | None = None
+    typo_high: bool = False
     pronominal: bool = False
 
 
@@ -279,11 +280,38 @@ def _subject_before_clitic(pieces: list[str], index: int) -> bool:
     return _norm(pieces[j]) in SUBJECTS
 
 
+_BARE_OBJECT = {"le", "la", "les", "l'", "lui", "leur", "en", "y", "me", "te", "se", "m'", "t'", "s'"}
+_CLAUSE_BREAK = {",", ".", "?", "!", ";", ":"}
+
+
+def _raw_is_object_pronoun(pieces: list[str], index: int) -> bool:
+    """vous/nous is an object when ne, another subject, or a noun sits to its left."""
+    if _norm(pieces[index]) not in {"vous", "nous"}:
+        return False
+    for j in range(index - 1, -1, -1):
+        word = _norm(pieces[j])
+        if word in _CLAUSE_BREAK:
+            break
+        if word in {"ne", "n'"} or (word in SUBJECTS and word not in {"ce"}):
+            return True
+        if word in {"monde", "gens", "chacun", "chacune", "quelqu'un", "quelqu'une"}:
+            return True
+        if word in _BARE_OBJECT or word in BETWEEN or word in DETERMINERS or word in DISCOURSE or word in {"qu'", "que", "qui", "tout"}:
+            continue
+        found = entry(word) or entry(simplemma.lemmatize(word, lang="fr"))
+        if found and found.get("p") == "NOUN":
+            return True
+        break
+    return False
+
+
 def _subject_before(tokens: list[str], index: int) -> tuple[str, str] | None:
     for j in range(index - 1, -1, -1):
         low = _norm(tokens[j])
-        if low in {",", ".", "?", "!", ";", ":"}:
+        if low in _CLAUSE_BREAK:
             break
+        if low in {"vous", "nous"} and _raw_is_object_pronoun(tokens, j):
+            continue
         if low in SUBJECTS and low not in {"ce"}:
             return SUBJECTS[low]
         if low in REFLEXIVES or low in BETWEEN or low in {"ne", "n'"}:
@@ -439,6 +467,10 @@ def _choose(readings: tuple[Reading, ...], *, subject, aux, subjunctive: bool, c
         matched = [r for r in pool if r.person == subject[0] and (not r.number or r.number == subject[1])]
         if matched:
             pool = matched
+            # « Vous voulez » has a subject, so the vous-form is not a command.
+            stated = [r for r in pool if r.mood != "imp"]
+            if stated:
+                pool = stated
     if clause_start and subject is None:
         commands = [r for r in pool if r.mood == "imp"]
         if commands:
@@ -511,18 +543,45 @@ def _det_gender_before(pieces: list[str], index: int) -> str:
 
 
 def _rare_verb_twin(surface: str, lemma: str) -> bool:
-    """typer/type, policer/police, fenêtrer/fenêtre, former/forme."""
+    """typer/type, policer/police, fenêtrer/fenêtre, former/forme, terrer/terre."""
     if lemma == surface:
         return False
-    if lemma == surface + "r":
-        return True
-    stem = surface[:-1] if surface.endswith("e") else surface
-    return lemma == stem + "er"
+    bases = [surface]
+    if surface.endswith("s") and len(surface) > 3:
+        bases.append(surface[:-1])
+    for base in bases:
+        if lemma == base + "r":
+            return True
+        stem = base[:-1] if base.endswith("e") else base
+        if stem and lemma == stem + "er":
+            return True
+    return False
+
+
+_NOUNISH_PREV = {"de", "d'", "sans", "avec", "par", "pour", "en", "dans", "sur", "sous", "vers"}
+
+
+def _dictionary_noun(low: str) -> dict | None:
+    found = entry(low) or entry(simplemma.lemmatize(low, lang="fr"))
+    if found and found.get("p") == "NOUN":
+        return found
+    return None
+
+
+def _verb_homograph(low: str) -> bool:
+    """A dictionary noun that only collides with a rare twin or a participle."""
+    readings = readings_for(_lookup_surface(low))
+    if not readings:
+        return False
+    return all(_rare_verb_twin(low, reading.lemma) or reading.mood == "part" for reading in readings)
 
 
 def _noun_override(low: str, prev: str, gender: str) -> dict | None:
-    """After a determiner, a noun reading beats a stray verb homograph."""
-    if prev not in DETERMINERS and prev not in NUMBER_DET and prev not in {"de", "d'"} and not gender:
+    """After a determiner or a bare noun, a noun reading beats a stray verb homograph."""
+    prepish = prev in DETERMINERS or prev in NUMBER_DET or prev in _NOUNISH_PREV or bool(gender)
+    if not prepish:
+        if (not prev or prev in _CLAUSE_BREAK) and _verb_homograph(low):
+            return _dictionary_noun(low)
         return None
     found = entry(low) or entry(simplemma.lemmatize(low, lang="fr"))
     if found and found.get("p") in {"NOUN", "ADJ"}:
@@ -540,19 +599,50 @@ def _noun_override(low: str, prev: str, gender: str) -> dict | None:
     return None
 
 
+def _governing_subject(pieces: list[str], index: int) -> str | None:
+    """Subject pronoun or noun governing this verb. Object vous/nous does not count."""
+    j = index - 1
+    while j >= 0:
+        word = _norm(pieces[j])
+        if word in _CLAUSE_BREAK:
+            break
+        if word in {"ne", "n'"} or word in _BARE_OBJECT or word in BETWEEN or word in {"pas", "plus", "jamais", "rien"}:
+            j -= 1
+            continue
+        if word in {"vous", "nous"}:
+            if _raw_is_object_pronoun(pieces, j):
+                j -= 1
+                continue
+            return word
+        if word in SUBJECTS and word not in {"ce"}:
+            return word
+        if word in {"monde", "gens", "chacun", "chacune", "quelqu'un", "quelqu'une"}:
+            return "noun"
+        if word in DISCOURSE:
+            j -= 1
+            continue
+        found = entry(word) or entry(simplemma.lemmatize(word, lang="fr"))
+        if found and found.get("p") == "NOUN":
+            return "noun"
+        return None
+    return None
+
+
 def _imperative_person(pieces: list[str], index: int) -> tuple[str, str] | None:
     """Commands keep an object clitic even when spoken French drops ne: « t'inquiète pas »."""
+    if _governing_subject(pieces, index):
+        return None
     lows = [_norm(piece) for piece in pieces]
     j = index - 1
     saw_ne = False
     saw_clitic = False
-    while j >= 0 and lows[j] not in {".", "?", "!", ";", ":", ","}:
+    while j >= 0 and lows[j] not in _CLAUSE_BREAK:
         word = lows[j]
         if word in {"ne", "n'"}:
             saw_ne = True
             j -= 1
             continue
-        if word in REFLEXIVES or word in {"le", "la", "les", "lui", "leur", "en", "y"}:
+        if word in REFLEXIVES or word in _BARE_OBJECT or word in {"vous", "nous"}:
             saw_clitic = True
             j -= 1
             continue
@@ -576,6 +666,27 @@ def _imperative_person(pieces: list[str], index: int) -> tuple[str, str] | None:
     return ("2", "s")
 
 
+def _built_pronoun_is_object(tokens: list[Tok], index: int) -> bool:
+    low = _norm(tokens[index].text)
+    if low not in {"vous", "nous"}:
+        return False
+    for earlier in range(index - 1, -1, -1):
+        tok = tokens[earlier]
+        if not tok.is_word:
+            if tok.text in ".?!;:":
+                break
+            continue
+        prev = _norm(tok.text)
+        if prev in {"ne", "n'"} or (prev in SUBJECTS and prev not in {"ce"}):
+            return True
+        if tok.pos == "NOUN" or tok.role == "noun" or prev in {"monde", "gens", "chacun", "chacune"}:
+            return True
+        if prev in _BARE_OBJECT or prev in BETWEEN or prev in DETERMINERS or prev in DISCOURSE or tok.pos in {"DET", "ADJ", "ADP", "ADV"}:
+            continue
+        break
+    return False
+
+
 def _subject_from_built(tokens: list[Tok]) -> tuple[str, str] | None:
     for index in range(len(tokens) - 1, -1, -1):
         tok = tokens[index]
@@ -586,7 +697,9 @@ def _subject_from_built(tokens: list[Tok]) -> tuple[str, str] | None:
         low = _norm(tok.text)
         if tok.pos == "DET":
             continue
-        if low in SUBJECTS and tok.pos == "PRON":
+        if low in {"vous", "nous"} and _built_pronoun_is_object(tokens, index):
+            continue
+        if low in SUBJECTS and tok.pos == "PRON" and low not in {"ce"}:
             return SUBJECTS[low]
         if low in {"quelqu'un", "quelqu'une", "chacun", "chacune"}:
             return ("3", "s")
@@ -646,6 +759,25 @@ def _licenses_infinitive(tokens: list[Tok], index: int) -> bool:
     return False
 
 
+_INF_SKIP = _BARE_OBJECT | DETERMINERS | {"ne", "n'", "pas", "plus", "jamais", "qu'", "que", "qui"}
+
+
+def _preposition_or_modal_licenses(tokens: list[Tok], index: int) -> bool:
+    """à/de/pour/sans, or a modal, licenses a real infinitive. Skip one article or clitic."""
+    for tok in reversed(tokens[:index]):
+        low = _norm(tok.text)
+        if low in _CLAUSE_BREAK:
+            break
+        if low in _INF_SKIP or low in BETWEEN:
+            continue
+        if low in {"à", "de", "d'", "pour", "sans"}:
+            return True
+        if tok.lemma in _INFINITIVE_LEMMAS or low in {"va", "vais", "vas", "vont", "allons", "allez", "faut"}:
+            return True
+        return False
+    return False
+
+
 def _attested_form(surface: str) -> bool:
     return bool(entry(surface) or readings_for(surface))
 
@@ -681,8 +813,10 @@ def _flag_typos(tokens: list[Tok], text: str) -> list[str]:
         low = _norm(tok.text)
         prevs = [_norm(item.text) for item in tokens[max(0, index - 4) : index]]
         guess = ""
+        licensed = _preposition_or_modal_licenses(tokens, index)
         if (
-            recent_aux(index, "avoir")
+            not licensed
+            and recent_aux(index, "avoir")
             and not participle_between(index)
             and tok.reading
             and tok.reading.mood == "inf"
@@ -690,7 +824,8 @@ def _flag_typos(tokens: list[Tok], text: str) -> list[str]:
         ):
             guess = low[:-2] + "é"
         elif (
-            recent_aux(index, "avoir")
+            not licensed
+            and recent_aux(index, "avoir")
             and not participle_between(index)
             and low.endswith("ez")
             and tok.reading
@@ -700,9 +835,14 @@ def _flag_typos(tokens: list[Tok], text: str) -> list[str]:
             if not guess and tok.lemma.endswith("er"):
                 guess = tok.lemma[:-2] + "é"
         elif low.endswith("ants") and not entry(low) and not readings_for(low):
-            singular = low[:-1]
-            if entry(singular) or readings_for(singular):
-                guess = singular
+            # « marchants » after de/les is the noun marchands. A missed plural
+            # adjective (« mouvants ») is not a singular participle.
+            noun = low[:-4] + "ands"
+            prev = prevs[-1] if prevs else ""
+            singular = noun[:-1] if noun.endswith("s") else noun
+            found = entry(noun) or entry(singular)
+            if found and found.get("p") == "NOUN" and prev in (DETERMINERS | NUMBER_DET | {"de", "d'", "des", "du"}):
+                guess = noun
         elif (
             index
             and prevs
@@ -736,6 +876,7 @@ def _flag_typos(tokens: list[Tok], text: str) -> list[str]:
             continue
         label = f"possible subtitle typo, likely {guess}"
         tok.typo = guess
+        tok.typo_high = True
         tok.role = "typo"
         tok.form_note = label
         tok.gloss = ""
@@ -1003,6 +1144,8 @@ def analyze_line(speaker: str | None, start_ms: int, end_ms: int, text: str, *, 
         index += 1
     _fix_object_pronouns(tokens)
     typos = _flag_typos(tokens, text)
+    # Replace typos in the original string before expressions fold several words into one token.
+    corrected = corrected_sentence(tokens, text)
     _collapse_expressions(tokens)
     return Line(
         speaker=speaker,
@@ -1012,7 +1155,7 @@ def analyze_line(speaker: str | None, start_ms: int, end_ms: int, text: str, *, 
         tokens=tokens,
         tip=line_tip(text),
         typos=typos,
-        corrected_text=corrected_sentence(tokens, text),
+        corrected_text=corrected,
     )
 
 
@@ -1053,6 +1196,15 @@ def _next_word(tokens: list[Tok], start: int) -> int | None:
     return None
 
 
+def _future_homophone_typo(tok: Tok) -> bool:
+    """« ferais » → « ferai » is still the verb inside « faire attention »."""
+    if not tok.typo:
+        return False
+    guess = re.sub(r"\s*\([^)]*\)", "", tok.typo).strip().lower()
+    surface = _norm(tok.text)
+    return bool(surface.endswith("ais") and guess == surface[:-1])
+
+
 def _collapse_expressions(tokens: list[Tok]) -> None:
     """Fold conjugated multi-word phrases into one expression token."""
     i = 0
@@ -1062,7 +1214,7 @@ def _collapse_expressions(tokens: list[Tok]) -> None:
             i += 1
             continue
         end, lemma, meaning = span
-        if any(tokens[k].typo for k in range(i, end)):
+        if any(tokens[k].typo and not _future_homophone_typo(tokens[k]) for k in range(i, end)):
             i += 1
             continue
         text = _join_surface([tok.text for tok in tokens[i:end]])
@@ -1072,7 +1224,9 @@ def _collapse_expressions(tokens: list[Tok]) -> None:
 
 def _expression_span(tokens: list[Tok], index: int) -> tuple[int, str, str] | None:
     tok = tokens[index]
-    if not tok.is_word or tok.role == "expr" or tok.typo:
+    if not tok.is_word or tok.role == "expr":
+        return None
+    if tok.typo and not _future_homophone_typo(tok):
         return None
     low = _norm(tok.text)
     if low == "on":
@@ -1096,10 +1250,7 @@ def _expression_span(tokens: list[Tok], index: int) -> tuple[int, str, str] | No
             prep = _next_word(tokens, verb + 1)
             if prep is not None and _norm(tokens[prep].text) in {"de", "d'"}:
                 return prep + 1, "s'occuper de", "to take care of; to deal with"
-    if tok.lemma == "faire" and not tok.typo:
-        # A real conditional (« je ferais attention ») stays a verb, not this phrase.
-        if tok.reading and tok.reading.mood == "cond":
-            return None
+    if tok.lemma == "faire":
         noun = _next_word(tokens, index + 1)
         if noun is not None and (tokens[noun].lemma == "attention" or _norm(tokens[noun].text) == "attention"):
             end = noun + 1
@@ -1126,23 +1277,40 @@ def _join_surface(pieces: list[str]) -> str:
 
 
 def corrected_sentence(tokens: list[Tok], original: str) -> str:
-    """French with likely subtitle typos replaced, for translation and audio English."""
-    if not any(tok.typo for tok in tokens):
-        return original
-    pieces: list[str] = []
-    for tok in tokens:
-        if not tok.typo:
-            pieces.append(tok.text)
+    """French with high-confidence typos replaced inside the original spacing.
+
+    Speaker dashes keep their spaces. Only a confident guess is substituted,
+    and only that word, so the rest of the line is left as printed.
+    """
+    pairs: list[tuple[int, int, str]] = []
+    search_from = 0
+    folded = original.lower()
+    for index, tok in enumerate(tokens):
+        if not tok.typo or not tok.typo_high:
             continue
         guess = re.sub(r"\s*\([^)]*\)", "", tok.typo).strip()
         if not guess:
-            pieces.append(tok.text)
             continue
-        prev = _norm(pieces[-1]) if pieces else ""
-        if prev and guess.lower().replace("’", "'").startswith(prev):
-            pieces.pop()
-        pieces.append(guess)
-    return _join_surface(pieces)
+        span = tok.text
+        prev = tokens[index - 1].text if index else ""
+        prev_norm = _norm(prev)
+        guess_norm = guess.lower().replace("’", "'")
+        if prev_norm and guess_norm.startswith(prev_norm):
+            span = prev + tok.text
+        idx = folded.find(span.lower(), search_from)
+        if idx < 0 and span != tok.text:
+            span = tok.text
+            idx = folded.find(span.lower(), search_from)
+        if idx < 0:
+            continue
+        pairs.append((idx, idx + len(span), guess))
+        search_from = idx + len(span)
+    if not pairs:
+        return original
+    out = original
+    for start, end, repl in reversed(pairs):
+        out = out[:start] + repl + out[end:]
+    return out
 
 
 def line_tip(text: str) -> str | None:

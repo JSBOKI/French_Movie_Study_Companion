@@ -96,6 +96,10 @@ def polish_translation(french: str, english: str) -> str:
     english = _fix_defoncer(french, english)
     english = _fix_avant(french, english)
     english = _fix_pepin(french, english)
+    english = _fix_paume(french, english)
+    english = _fix_cutoff(french, english)
+    english = _fix_vite(french, english)
+    english = _fix_he_bien(french, english)
     return english
 
 
@@ -145,6 +149,84 @@ def _fix_pepin(french: str, english: str) -> str:
     return english
 
 
+def _fix_paume(french: str, english: str) -> str:
+    if not re.search(r"\bon est paum[ée]e?s?\b", french, re.I):
+        return english
+    return re.sub(
+        r"\b(?:broke|penniless|bummed|screwed|stranded)\b",
+        "lost",
+        english,
+        count=1,
+        flags=re.I,
+    )
+
+
+def _fix_cutoff(french: str, english: str) -> str:
+    if not re.search(r"\bon a été coup", french, re.I):
+        return english
+    if re.search(r"\bcut off\b", english, re.I):
+        return english
+    return re.sub(
+        r"\b(?:we've|we’ve|we have) been cut\b",
+        "we got cut off",
+        english,
+        count=1,
+        flags=re.I,
+    )
+
+
+def _fix_vite(french: str, english: str) -> str:
+    """« Appelez-moi vite » is soon, not quickly."""
+    if not re.search(r"\bvite\b", french, re.I):
+        return english
+    if not re.search(r"(?:-(?:moi|toi)|appelez|appelle|appelons|venez|viens)\b", french, re.I):
+        return english
+    updated = re.sub(r"\bquickly\b", "soon", english, count=1, flags=re.I)
+    if updated != english:
+        return updated
+    return re.sub(r"\b(call me) fast\b", r"\1 soon", english, count=1, flags=re.I)
+
+
+def _fix_he_bien(french: str, english: str) -> str:
+    if not re.search(r"\b(?:hé|eh)\s+bien\b", french, re.I):
+        return english
+    return re.sub(
+        r"^(?:hey|eh|oh|ah|ha|he)[,!]?\s+(?:well|good|fine)\b",
+        "Well",
+        english,
+        count=1,
+        flags=re.I,
+    )
+
+
+def note_future_spelling(line: dict) -> None:
+    """When the English is future, a 1st-person -rais form is probably -rai.
+
+    The English is left as it is. This only records the spelling and the
+    corrected French, so a later pass can translate « ferai » rather than « ferais ».
+    """
+    if line.get("translation_kind") != "english":
+        return
+    english = line.get("translation") or ""
+    if not re.search(r"\b(?:I'll|I will|I'm going to|I am going to)\b", english):
+        return
+    if re.search(r"\bwould\b", english, re.I):
+        return
+    text = line.get("text") or ""
+    match = re.search(r"\b(?:je\s+|j')([A-Za-zÀ-ÿœŒ]+rais)\b", text, re.I)
+    if not match:
+        return
+    surface = match.group(1)
+    guess = surface[:-1]
+    note = f"{surface}: possible subtitle typo, likely {guess}"
+    typos = line.setdefault("typos", [])
+    if not any(surface.lower() in item.lower() and guess in item.lower() for item in typos):
+        typos.append(note)
+    corrected = line.get("corrected_text") or text
+    if re.search(rf"\b{re.escape(surface)}\b", corrected):
+        line["corrected_text"] = re.sub(rf"\b{re.escape(surface)}\b", guess, corrected, count=1)
+
+
 _SENTENCE = re.compile(r"[^.!?…]+[.!?…]*")
 
 
@@ -174,9 +256,14 @@ def translate_line(line: Line) -> None:
         (key,),
     )
     if cached and cached["target"].strip():
-        line.translation = polish_translation(key, cached["target"])
-        line.translation_kind = "english"
-        return
+        from app.services.offline_translate import translation_sane
+
+        if translation_sane(key, cached["target"]):
+            line.translation = polish_translation(key, cached["target"])
+            line.translation_kind = "english"
+            return
+        with session() as conn:
+            conn.execute("DELETE FROM translations WHERE source = ?", (key,))
     line.translation = ""
     line.translation_kind = "pending"
 
@@ -261,6 +348,7 @@ def _write_back(parsed: list[tuple[int, dict]], done: dict[str, str]) -> None:
             elif line.get("translation_kind") != "english":
                 line["translation"] = _gloss_line(line)
                 line["translation_kind"] = "gloss"
+            note_future_spelling(line)
             if line.get("translation_kind") == "english" and line.get("translation"):
                 by_fr[line.get("text") or ""] = line["translation"]
         for item in lesson.get("vocabulary") or []:
@@ -301,8 +389,18 @@ def _join_translation(text: str, done: dict[str, str]) -> str:
     return ""
 
 
+def clear_cached_translations() -> None:
+    """Drop every cached sentence. Rebuild uses this so a bad line can be redone."""
+    with session() as conn:
+        conn.execute("DELETE FROM translations")
+
+
 def _store(source: str, target: str, provider: str) -> None:
-    if provider == "gloss":
+    if provider == "gloss" or not (target or "").strip():
+        return
+    from app.services.offline_translate import translation_sane
+
+    if not translation_sane(source, target):
         return
     with session() as conn:
         conn.execute(

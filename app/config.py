@@ -72,6 +72,11 @@ def tts_rate() -> str:
     return os.environ.get("TTS_RATE", "-8%")
 
 
+def app_password() -> str:
+    """When set, the study app asks for this password. Empty means local use, no login."""
+    return os.environ.get("APP_PASSWORD", "").strip()
+
+
 def public_config() -> dict:
     provider = tts_provider()
     return {

@@ -317,6 +317,7 @@
       <h1>${esc(lesson.title)} <span class="meta">of ${lesson.scene_count}</span></h1>
       ${lesson.movie_status === "translating" ? `<div class="banner">${esc(lesson.movie_progress || "Translating the dialogue…")}</div>` : ""}
       <p class="lede">${esc(lesson.overview || "")}</p>
+      ${(lesson.grammar_points || []).length ? `<ul class="point-list">${lesson.grammar_points.map((point) => `<li>${esc(point)}</li>`).join("")}</ul>` : ""}
       <div class="row" style="margin-bottom:14px">
         ${prev}${next}
         <a class="btn pine" href="#/review?movie=${movieId}&scene=${lesson.id}">Cards from this scene</a>
@@ -415,7 +416,7 @@
     }
     const card = state.card;
     if (!paint(shell("Review", `
-      <p class="meta">${esc(card.movie_title || "")} · scene ${esc(card.scene_index)} · ${stats.due || card.remaining} due</p>
+      <p class="meta">${esc(card.movie_title || "")} · scene ${esc(card.scene_index)} · ${stats.due != null ? stats.due : card.remaining} due</p>
       <div class="card-stage">
         <button class="flash" data-action="reveal" type="button" aria-expanded="${state.revealed}">
           <div class="front" lang="fr">${esc(card.front)}</div>

@@ -21,7 +21,7 @@ Try **Try the sample short** on the home screen. That loads `sample/minuit_ligne
 ## What you can do
 
 1. **Add a film.** Search uses Wikidata and needs no key. You can also type the title yourself. Upload a `.srt`, `.vtt`, or `.ass`/`.ssa` subtitle. The film is split on pauses, then each lesson is kept to about 30–40 lines (often about two minutes) so a long scene does not become one huge list. The scene title comes from the nouns in that stretch, with the dictionary gender.
-2. **Read a scene.** New words show the dictionary form, noun gender taken from the article in the line (`un pendule` is a pendulum, `la pendule` is a clock), and verbs as the infinitive. The tense, mood, and person stay on the example, not on the headword. Grammar notes only appear when that pattern is really in the scene: passé composé beside imparfait, negation with a dropped *ne*, the subjunctive after *il faut que*, reflexives, pronoun order, and spoken forms such as *t'as*, *j'sais pas*, and *y'a*. A later scene does not pad its notes back up with everything from scene 1; a repeat is marked **review**, and at most two of those are added. Tap a word for the gloss. **I know this** removes a word from future lists and suspends its card. A suspicious subtitle form is flagged (`possible subtitle typo`) and is not turned into a card.
+2. **Read a scene.** New words show the dictionary form, noun gender from the dictionary (`la fille`, `le commissariat`), and verbs as the infinitive. `pendule` is the exception, because the article changes the word: `un pendule` is a pendulum and `la pendule` is a clock. The tense, mood, and person stay on the example, not on the headword. Grammar notes only appear when that pattern is really in the scene: passé composé beside imparfait, negation with a dropped *ne*, the subjunctive after *il faut que*, reflexives, pronoun order, and spoken forms such as *t'as*, *j'sais pas*, and *y'a*. A later scene does not pad its notes back up with everything from scene 1; a repeat is marked **review**, and at most two of those are added. Tap a word for the gloss. **I know this** removes a word from future lists and suspends its card. A suspicious subtitle form is flagged (`possible subtitle typo`) and is not turned into a card.
 3. **Review.** Each new word becomes a card (French with article, English, an example line). Review uses [FSRS](https://github.com/open-spaced-repetition/py-fsrs). Progress is stored in SQLite. Export a film as CSV or an Anki `.apkg` from the film page.
 4. **Listen.** A scene can build two MP3s: a dialogue drill (French, a pause to repeat, English, French again) and a vocabulary drill. Named speakers are split between `fr-FR-DeniseNeural` and `fr-FR-HenriNeural`. A subtitle with no names uses one voice. Dash dialogue switches voice when the speaker changes, including a second dash in the same cue. If a line only has a word-by-word gloss, the drill skips the English instead of reading it aloud. Lines and words also play from the lesson and from a card. Spoken shortcuts such as *t'as* and a real liaison get a short note; a plain apostrophe does not. A likely subtitle typo is translated from the corrected French.
 
@@ -35,13 +35,13 @@ Try **Try the sample short** on the home screen. That loads `sample/minuit_ligne
 | Flashcards, FSRS, Anki CSV and `.apkg` | nothing |
 | Sample short | nothing |
 | Line and drill speech | network access to Microsoft Edge voices, no key |
-| French→English line translations | nothing; an Argos model (~80 MB) downloads on first use into `DATA_DIR` |
+| French→English line translations | nothing; a French–English model (~80 MB) downloads on first use into `DATA_DIR` |
 | Film posters and richer search | `TMDB_API_KEY` |
 | Search and download French subtitles | `OPENSUBTITLES_API_KEY` |
 | In-context sense picking and a polish of the English | `LLM_API_KEY` |
 | A different speech engine | `TTS_PROVIDER=openai` or `espeak` |
 
-Line translations use an offline Argos French→English model. The lesson opens while that runs, with a progress line. The sample lines are already translated, so the short demo does not download the model. If Argos cannot be installed, the app tries MyMemory once and stops after the first quota error (HTTP 429) instead of calling it for every line. A word-by-word gloss is labeled in the lesson, is not saved as a translation, and is not read aloud. The app never bundles copyrighted subtitles.
+Line translations use an offline French→English model (CTranslate2 and SentencePiece, the same weights Argos publishes). The app does not install PyTorch. The lesson opens while that runs, with a progress line. The sample lines are already translated, so the short demo does not download the model. If the model cannot be installed, the app tries MyMemory once and stops after the first quota error (HTTP 429) instead of calling it for every line. A word-by-word gloss is labeled in the lesson, is not saved as a translation, and is not read aloud. A translation that comes back with a stray capitalized word is dropped and tried once more, and it is not cached. **Rebuild** on the film page clears the translation cache. The app never bundles copyrighted subtitles.
 
 `sample/huit_cents_repliques.srt` is a longer original practice file (a night at a fictional port clinic, not a commercial film) for trying a full-length subtitle. It uses curly apostrophes, spoken shortcuts, and a few deliberate typos.
 
@@ -61,12 +61,21 @@ Line translations use an offline Argos French→English model. The lesson opens 
 | `TTS_VOICE_FR_MALE` | `fr-FR-HenriNeural` | Voice for male speaker names |
 | `TTS_VOICE_EN` | `en-US-JennyNeural` | English voice in the drills |
 | `TTS_RATE` | `-8%` | French speaking rate |
-| `DATA_DIR` | `data/user` | SQLite database, audio, speech cache, and the Argos model |
+| `DATA_DIR` | `data/user` | SQLite database, audio, speech cache, and the translation model |
 | `HOST`, `PORT` | `0.0.0.0`, `8000` | Bind address |
+| `APP_PASSWORD` | empty | If set, a login page is required. If empty, the app stays open for local use |
 
-## Deploying later
+## Deploy on Render
 
-Run `python -m app` behind a reverse proxy. Keep a single worker: the database is SQLite. Persist `DATA_DIR` across restarts, and install `ffmpeg`. The server needs outbound network for Wikidata search, for the one-time Argos model download, and for Edge voices. There is no login, so do not put it on the public internet without something in front that restricts who can open it (a private VPN, HTTP auth, or a localhost tunnel).
+`render.yaml` is a blueprint for one Python web service on the Starter plan:
+
+1. Push this repo to GitHub and, in the Render dashboard, choose **New → Blueprint**. Point it at the repo. Render reads `render.yaml`.
+2. When it asks for `APP_PASSWORD`, set a long password. That variable is `sync: false`, so later blueprint syncs will not overwrite it. Leave it empty only if the service is not reachable from the internet.
+3. The service builds with `pip install -r requirements.txt` and starts with `python -m app`. Python is 3.13.5. Render checks `GET /api/health`, which stays open even when a password is set.
+4. A 1 GB disk is mounted at `/var/data`, and `DATA_DIR=/var/data`, so the SQLite file and the translation model survive a restart. On boot the process answers the health check immediately and downloads the model in the background the first time.
+5. Keep a single instance. The database is SQLite, and the translator runs one sentence at a time. `ffmpeg` is not in the default Python image; drill MP3s need it on the PATH if you add it to the build. Edge voices need outbound network, as does the one-time model download and Wikidata search.
+
+Open the service URL, sign in with `APP_PASSWORD`, and add a film. Phones keep the login in a cookie for about six months.
 
 Dictionary data is a compact FreeDict French–English extract, an OpenSubtitles frequency list, and verb forms generated with verbecc. Sources and licenses are in `app/data/SOURCES.md`.
 

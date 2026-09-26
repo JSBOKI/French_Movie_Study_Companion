@@ -56,7 +56,7 @@ def build_scene_lesson(
     vocab, taught_now = _vocabulary(lines, taught=taught, known=known)
     carried = _count_carried(lines, taught)
     grammar = detect_grammar(lines, seen_grammar)
-    overview = _overview(scene_index, vocab, grammar, carried)
+    overview, grammar_points = _overview(scene_index, vocab, grammar, carried)
     start = cues[0].start_ms
     end = cues[-1].end_ms
     title = _scene_title(vocab, lines, scene_index)
@@ -68,6 +68,7 @@ def build_scene_lesson(
         "start_ms": start,
         "end_ms": end,
         "overview": overview,
+        "grammar_points": grammar_points,
         "new_count": len(vocab),
         "carried_over": carried,
         "vocabulary": vocab,
@@ -136,7 +137,7 @@ def _vocabulary(lines: list[Line], *, taught: set[str], known: set[str]) -> tupl
                 slot["gender"] = tok.gender
             if tok.pronominal:
                 slot["pronominal"] = True
-            if _form_rank(tok.form_note) > _form_rank(slot["form_note"]):
+            if _prefer_example(line, tok, slot):
                 slot["form_note"] = tok.form_note
                 slot["surface"] = tok.text
                 slot["example"] = line
@@ -147,8 +148,11 @@ def _vocabulary(lines: list[Line], *, taught: set[str], known: set[str]) -> tupl
         pos = slot["pos"] or found.get("p") or ""
         if pos not in CONTENT:
             continue
-        # The article in the line wins over a dictionary gender (un pendule, not la pendule).
-        gender = slot["gender"] or found.get("g") or ""
+        # Dictionary gender. Pendule is the exception: the article changes the meaning.
+        if slot["lemma"].lower() == "pendule":
+            gender = slot["gender"] or found.get("g") or ""
+        else:
+            gender = found.get("g") or slot["gender"] or ""
         if gender and slot.get("gloss"):
             gloss = slot["gloss"]
         else:
@@ -430,19 +434,27 @@ def _point_name(title: str) -> str:
     return re.sub(r"^Review:\s*", "", title).strip()
 
 
-def _overview(index: int, vocab: list[dict], grammar: list[Note], carried: int) -> str:
-    titles = [_point_name(note.title) for note in grammar[:3]]
-    grammar_bit = ""
-    if titles:
-        grammar_bit = " You'll work on " + ", ".join(titles) + "."
+def _prefer_example(line: Line, tok: Tok, slot: dict) -> bool:
+    """A line with no typo flag wins over a flagged one when both contain the word."""
+    new_clean = not line.typos
+    old_clean = not slot["example"].typos
+    if new_clean != old_clean:
+        return new_clean
+    return _form_rank(tok.form_note) > _form_rank(slot["form_note"])
+
+
+def _overview(index: int, vocab: list[dict], grammar: list[Note], carried: int) -> tuple[str, list[str]]:
+    points = [_point_name(note.title) for note in grammar[:3]]
+    grammar_bit = " You'll work on the points below." if points else ""
     carried_bit = ""
     if carried and index > 1:
         carried_bit = f" {carried} words from earlier scenes come back in the dialogue and are not taught again."
-    return (
+    text = (
         f"Scene {index} introduces {len(vocab)} new words from this stretch of the film."
         + grammar_bit
         + carried_bit
     )
+    return text, points
 
 
 def _line_json(line: Line) -> dict:
@@ -500,12 +512,18 @@ _NOT_TITLE = {
     "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
     "juillet", "août", "aout", "septembre", "octobre", "novembre", "décembre", "decembre",
 }
+# Kept out of scene titles only. A card can still teach the word.
+_VULGAR = {
+    "merde", "putain", "con", "connard", "connasse", "cul", "bite", "chier", "chiasse",
+    "foutre", "niquer", "nique", "salope", "enculé", "encule", "enculer", "bordel",
+    "pute", "couille", "couilles", "emmerdeur", "emmerdeuse",
+}
 
 
 def _title_label(lemma: str, line_gender: str | None) -> str | None:
     """Dictionary gender, with an article. Pendule keeps the article in the line."""
     key = (lemma or "").lower()
-    if not key or key in _NOT_TITLE:
+    if not key or key in _NOT_TITLE or key in _VULGAR:
         return None
     found = entry(key) or {}
     if found.get("p") not in {None, "", "NOUN"}:

@@ -8,6 +8,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
     monkeypatch.setenv("LLM_API_KEY", "")
     monkeypatch.setenv("TMDB_API_KEY", "")
     monkeypatch.setenv("OPENSUBTITLES_API_KEY", "")
