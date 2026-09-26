@@ -16,6 +16,14 @@ MAX_LINES = 40
 TARGET_LINES = 34
 
 
+def lesson_length(start_ms: int, end_ms: int) -> str:
+    """How long the scene's dialogue actually runs, from the cue timestamps."""
+    minutes = max(1, round(max(0, end_ms - start_ms) / MINUTE))
+    if minutes == 1:
+        return "about 1 min"
+    return f"about {minutes} min"
+
+
 def split_scenes(cues: list[Cue]) -> list[list[Cue]]:
     if not cues:
         return []

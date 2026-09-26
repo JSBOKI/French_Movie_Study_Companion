@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 
 from app.db import one
 from app.services.analyze import analyze_line
-from app.services.audio import english_for_audio
+from app.services.audio import drill_voices, english_for_audio
 from app.services.grammar import detect_grammar
 from app.services.lessons import build_scene_lesson
 from app.services.lexicon import gloss, senses
-from app.services.scenes import split_scenes
+from app.services.scenes import lesson_length, split_scenes
+from app.services.translate import polish_translation
 from app.services.subtitles import Cue, parse_subtitle
 from app.config import ROOT
 
@@ -329,6 +331,266 @@ def test_gloss_fallback_is_not_cached_or_spoken(monkeypatch):
         assert english_for_audio(line) == ""
     assert english_for_audio({"translation_kind": "english", "translation": "Where is he?"}) == "Where is he?"
     translate._mymemory_blocked = False
+
+
+def test_typo_guesses_and_corrected_french():
+    line = analyze_line(None, 0, 1000, "J'ai une chambre sur la mère.")
+    assert any("mer (the sea)" in note for note in line.typos)
+    assert line.corrected_text == "J'ai une chambre sur la mer."
+    assert "mère" not in line.corrected_text
+
+    worried = analyze_line(None, 0, 1000, "T'inquiété pas.")
+    assert any(re.search(r"likely t'inquiéter\b", note) for note in worried.typos)
+    assert not any(re.search(r"likely t'inquiéte\b", note) for note in worried.typos)
+    assert worried.corrected_text == "t'inquiéter pas."
+
+    coming = analyze_line(None, 0, 1000, "Ça va m'arrivé demain.")
+    assert any("m'arriver" in note for note in coming.typos)
+    kept = analyze_line(None, 0, 1000, "Ça m’arrivé souvent.")
+    assert any("m'arrive" in note for note in kept.typos)
+    assert all("m'arriver" not in note for note in kept.typos)
+
+    promised = analyze_line(None, 0, 1000, "Je ferais attention demain.")
+    assert any("ferai" in note for note in promised.typos)
+    assert promised.corrected_text == "Je ferai attention demain."
+    genuine = analyze_line(None, 0, 1000, "Je ferais attention.")
+    assert not genuine.typos
+    verb = next(tok for tok in genuine.tokens if tok.lemma == "faire")
+    assert verb.reading and verb.reading.mood == "cond"
+
+
+def test_imperative_without_ne_and_context_pos():
+    command = analyze_line(None, 0, 1000, "Non t'inquiète pas.")
+    verb = next(tok for tok in command.tokens if tok.lemma == "inquiéter")
+    assert verb.reading.mood == "imp"
+    assert (verb.reading.person, verb.reading.number) == ("2", "s")
+    spoken = analyze_line(None, 0, 1000, "T'inquiète pas.")
+    spoken_verb = next(tok for tok in spoken.tokens if tok.lemma == "inquiéter")
+    assert spoken_verb.reading.mood == "imp"
+    invite = analyze_line(None, 0, 1000, "Je t'invite pas.")
+    invite_verb = next(tok for tok in invite.tokens if tok.lemma == "inviter")
+    assert invite_verb.reading.mood != "imp"
+
+    _, regarde = _tok("Je le regarde.", "regarde")
+    assert regarde.pos == "VERB"
+    assert regarde.lemma == "regarder"
+    assert "look" in regarde.gloss
+    _, voyages = _tok("J'ai fait deux voyages.", "voyages")
+    assert voyages.pos == "NOUN"
+    assert voyages.lemma == "voyage"
+    _, vide = _tok("C'est un chariot vide.", "vide")
+    assert vide.pos == "ADJ"
+    assert vide.lemma == "vide"
+    sack = analyze_line(None, 0, 1000, "Vide le sac.")
+    assert sack.tokens[0].lemma == "vider"
+    assert sack.tokens[0].pos == "VERB"
+
+
+def test_expressions_glosses_and_scene_titles():
+    care = analyze_line(None, 0, 1000, "Je m'occupe de tout.")
+    assert any(tok.lemma == "s'occuper de" for tok in care.tokens)
+    assert not any(tok.lemma == "occuper" for tok in care.tokens)
+    walk = analyze_line(None, 0, 1000, "On se promène.")
+    assert any(tok.lemma == "se promener" and "walk" in tok.gloss for tok in walk.tokens)
+    cut = analyze_line(None, 0, 1000, "On a été coupés.")
+    assert any(tok.lemma == "on a été coupé" and "cut off" in tok.gloss for tok in cut.tokens)
+
+    lesson, _cards = _lesson("Qu'est-ce que tu veux ?", "Qu'est-ce qui se passe ?")
+    lemmas = {item["lemma"] for item in lesson["vocabulary"]}
+    assert "qu'est-ce" not in lemmas
+    assert "qu'est-ce que" in lemmas
+    assert "qu'est-ce qui" in lemmas
+    alone, _cards = _lesson("Qu'est-ce ?")
+    assert all(item["lemma"] != "qu'est-ce" for item in alone["vocabulary"])
+
+    for lemma, snippet in (
+        ("allo", "hello"),
+        ("promener", "walk"),
+        ("diner", "dinner"),
+        ("parachutiste", "parachut"),
+        ("hé", "hey"),
+        ("chambre", "room"),
+        ("magnifique", "magnificent"),
+        ("urgences", "emergency room"),
+    ):
+        assert snippet in gloss(lemma).lower()
+    _, urgences = _tok("Il est aux urgences.", "urgences")
+    assert urgences.lemma == "urgences"
+    assert "emergency room" in urgences.gloss
+    hospital, hospital_cards = _lesson("Il est aux urgences.")
+    assert hospital["title"] == "Les urgences"
+    assert next(card["front"] for card in hospital_cards if card["lemma"] == "urgences") == "les urgences"
+    _, allo = _tok("Hé, allo.", "allo")
+    assert allo.gloss
+    _, he = _tok("Hé, allo.", "Hé")
+    assert "hey" in he.gloss
+
+    assert _lesson("Le fille arrive.")[0]["title"] == "La fille"
+    assert _lesson("Le guêpe vole.")[0]["title"] == "La guêpe"
+    assert _lesson("La salut du matin.")[0]["title"].startswith("Le salut")
+    paired = _lesson("L'anglais et espagnol arrivent.")[0]["title"]
+    assert paired == "L'anglais et l'espagnol"
+    assert "mars" not in _lesson("En mars le train part.")[0]["title"].lower()
+    assert "an" not in _lesson("Dans un an le quai ferme.")[0]["title"].lower().split()
+    assert "voilà" not in _lesson("Voilà le train.")[0]["title"].lower()
+    pendulum = _lesson("C'est un pendule.")[0]["title"].lower()
+    clock = _lesson("La pendule sonne.")[0]["title"].lower()
+    assert "le pendule" in pendulum
+    assert "la pendule" in clock
+
+
+def test_scene_length_overview_and_clean_grammar_examples():
+    assert lesson_length(0, 120_000) == "about 2 min"
+    assert lesson_length(0, 45_000) == "about 1 min"
+    lesson, _cards = _lesson("Le train part.", "Il pleuvait.")
+    assert "about 1 min" in lesson["time_label"]
+    assert "Review, Review" not in lesson["overview"]
+
+    rich = [
+        "T'as vu l'heure ? Le train est parti.",
+        "Il pleuvait et j'avais pas de parapluie.",
+        "Il faut que tu partes.",
+        "Ne me laissez pas tomber.",
+    ]
+    cues = [Cue(i, i * 3000, i * 3000 + 2000, None, text) for i, text in enumerate(rich, start=1)]
+    reviewed, _cards = build_scene_lesson(
+        cues,
+        scene_index=3,
+        scene_count=4,
+        taught=set(),
+        known=set(),
+        seen_grammar={
+            "passe_compose_imparfait",
+            "spoken_french",
+            "negation",
+            "subjunctive",
+            "reflexive",
+            "contractions",
+            "pronouns",
+            "verlan",
+            "futur_proche",
+            "conditional",
+            "partitive",
+            "agreement",
+            "tu_vous",
+            "questions",
+            "imperative",
+            "on_we",
+            "depuis",
+            "weather",
+            "il_y_a",
+            "passe_compose",
+            "imparfait",
+        },
+    )
+    assert "You'll work on Review" not in reviewed["overview"]
+    assert "Review:" not in reviewed["overview"]
+    assert "You'll work on " in reviewed["overview"]
+
+    bad = analyze_line(None, 0, 1000, "Je ferais attention demain.")
+    good = analyze_line(None, 0, 1000, "Je ferai attention ce soir.")
+    good.translation = "I'll be careful tonight."
+    for note in detect_grammar([bad, good]):
+        assert all("ferais" not in ex["fr"] for ex in note.examples)
+        for ex in note.examples:
+            if ex["fr"] == good.text:
+                assert ex["en"] == "I'll be careful tonight."
+
+
+def test_idiom_post_edits_and_dash_voices():
+    assert polish_translation("On devrait se défoncer.", "We should get high.") == "We should give it our all."
+    assert polish_translation("Je vais me défoncer.", "I'm going to get high.") == "I'm going to give it my all."
+    sent = polish_translation("Avant de vous envoyer au Mexique.", "Before you sent to Mexico.")
+    assert sent == "Before sending you to Mexico."
+    seeds = polish_translation(
+        "Le nombre de pépins qu'elle aurait pu avoir.",
+        "The number of seeds she could have had.",
+    )
+    assert seeds == "The number of snags she could have had."
+    dropped = polish_translation(
+        "Le nombre de pépins qu'elle aurait pu avoir.",
+        "The number she could have had.",
+    )
+    assert "snag" in dropped
+    fruit = polish_translation("Le pépin de la pomme.", "The seed of the apple.")
+    assert "seed" in fruit
+    assert "snag" not in fruit
+
+    voices = drill_voices(
+        [
+            {"text": "- Où est-il ?", "speaker": None},
+            {"text": "- Je ne sais pas. - Si, regarde.", "speaker": None},
+        ],
+        "dashes",
+    )
+    assert [speaker for _text, speaker in voices] == ["Léa", "Marc", "Léa"]
+    continued = drill_voices(
+        [
+            {"text": "Bonjour. - Salut.", "speaker": None},
+            {"text": "Ça va.", "speaker": None},
+        ],
+        "dashes",
+    )
+    assert [speaker for _text, speaker in continued] == ["Léa", "Marc", "Marc"]
+    named = drill_voices([{"text": "Où est-il ?", "speaker": "Nina"}], "named")
+    assert named == [("Où est-il ?", "Nina")]
+    lesson, _cards = _lesson("Bonjour. - Salut.")
+    assert lesson["voice_mode"] == "dashes"
+
+
+def test_typo_lines_are_translated_from_the_correction(monkeypatch):
+    from app.services.pipeline import create_movie, process_subtitles
+
+    seen: list[str] = []
+
+    def fake_batch(texts):
+        seen.extend(texts)
+        out = []
+        for text in texts:
+            if "sur la mer" in text and "mère" not in text:
+                out.append("I have a room on the sea.")
+            elif "défonc" in text:
+                out.append("We should get high.")
+            elif text.startswith("Avant de vous"):
+                out.append("Before you sent to Mexico.")
+            elif "pépin" in text:
+                out.append("The number she could have had.")
+            elif "pleuvait" in text:
+                out.append("It was raining.")
+            else:
+                out.append("Okay.")
+        return out
+
+    monkeypatch.setattr("app.services.offline_translate.ensure_model", lambda: True)
+    monkeypatch.setattr("app.services.offline_translate.translate_batch", fake_batch)
+    movie = create_movie({"title": "Practice lines", "year": 2024})
+    text = (
+        "1\n00:00:01,000 --> 00:00:03,000\nJ'ai une chambre sur la mère.\n\n"
+        "2\n00:00:04,000 --> 00:00:06,000\nOn devrait se défoncer.\n\n"
+        "3\n00:00:07,000 --> 00:00:09,000\nAvant de vous envoyer au Mexique.\n\n"
+        "4\n00:00:10,000 --> 00:00:12,000\nLe nombre de pépins qu'elle aurait pu avoir.\n\n"
+        "5\n00:00:13,000 --> 00:01:50,000\nIl pleuvait.\n"
+    )
+    process_subtitles(movie["id"], text, "practice.srt")
+    assert any("sur la mer" in source and "mère" not in source for source in seen)
+    assert all("sur la mère" not in source for source in seen)
+    stored = one("SELECT lesson_json FROM scenes WHERE movie_id = ?", (movie["id"],))
+    lesson = json.loads(stored["lesson_json"])
+    by_fr = {line["text"]: line["translation"] for line in lesson["lines"]}
+    assert by_fr["J'ai une chambre sur la mère."] == "I have a room on the sea."
+    assert by_fr["On devrait se défoncer."] == "We should give it our all."
+    assert by_fr["Avant de vous envoyer au Mexique."] == "Before sending you to Mexico."
+    assert "snag" in by_fr["Le nombre de pépins qu'elle aurait pu avoir."]
+    assert by_fr["Il pleuvait."] == "It was raining."
+    chambre = next(item for item in lesson["vocabulary"] if item["lemma"] == "chambre")
+    assert "sea" in chambre["example_en"]
+    assert "mother" not in chambre["example_en"].lower()
+    for note in lesson["grammar"]:
+        for example in note["examples"]:
+            assert "ferais" not in example["fr"]
+            if example["fr"] == "Il pleuvait.":
+                assert example["en"] == "It was raining."
+    assert "about 2 min" in lesson["time_label"] or "about 1 min" in lesson["time_label"]
 
 
 def test_long_original_subtitle_shape():

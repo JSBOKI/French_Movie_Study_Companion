@@ -460,6 +460,11 @@ def detect_grammar(lines: list[Line], already_seen: set[str] | None = None) -> l
             note.review = True
             note.title = "Review: " + note.title
             chosen.append(note)
+    # A misspelled subtitle can still show that a pattern exists, but it is not the example.
+    typo_text = {line.text for line in lines if line.typos}
+    if typo_text:
+        for note in chosen:
+            note.examples = [ex for ex in note.examples if ex.get("fr") not in typo_text]
     return chosen
 
 

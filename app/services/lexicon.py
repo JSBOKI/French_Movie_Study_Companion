@@ -161,6 +161,9 @@ OVERRIDES: dict[str, dict] = {
     "attention": {"p": "NOUN", "g": "f", "e": "attention; care"},
     "anglais": {"p": "NOUN", "g": "m", "e": "English; English person"},
     "quelqu'un": {"p": "PRON", "g": "", "e": "someone; somebody"},
+    "chambre": {"p": "NOUN", "g": "f", "e": "room (bedroom); chamber"},
+    "magnifique": {"p": "ADJ", "g": "", "e": "magnificent; beautiful"},
+    "salut": {"p": "NOUN", "g": "m", "e": "hello; greeting"},
     "pépin": {"p": "NOUN", "g": "m", "e": "snag, hitch; pip, seed"},
     "type": {"p": "NOUN", "g": "m", "e": "guy; type, kind"},
     "police": {"p": "NOUN", "g": "f", "e": "the police"},
@@ -177,7 +180,14 @@ OVERRIDES: dict[str, dict] = {
     "malchanceux": {"p": "ADJ", "g": "", "e": "unlucky"},
     "normal": {"p": "ADJ", "g": "", "e": "normal; ordinary"},
     "dîner": {"p": "NOUN", "g": "m", "e": "dinner; evening meal"},
+    "diner": {"p": "NOUN", "g": "m", "e": "dinner; evening meal"},
     "allô": {"p": "INTJ", "g": "", "e": "hello (on the phone)"},
+    "allo": {"p": "INTJ", "g": "", "e": "hello (on the phone)"},
+    "hé": {"p": "INTJ", "g": "", "e": "hey"},
+    "promener": {"p": "VERB", "g": "", "e": "to take a walk; to walk"},
+    "parachutiste": {"p": "NOUN", "g": "", "e": "parachutist"},
+    "défoncer": {"p": "VERB", "g": "", "e": "to give it one's all; to go all out"},
+    "espagnol": {"p": "NOUN", "g": "m", "e": "Spanish; Spaniard"},
     "fascinant": {"p": "ADJ", "g": "", "e": "fascinating"},
     "ahurissant": {"p": "ADJ", "g": "", "e": "astonishing; mind-boggling"},
     "psychologue": {"p": "NOUN", "g": "", "e": "psychologist"},
@@ -416,13 +426,49 @@ _ARCHAIC = re.compile(
 )
 
 
+_FOLD = str.maketrans("àâäéèêëîïôöùûüçœæ", "aaaeeeeiioouuucoa")
+_folded: dict[str, str] | None = None
+
+
+def _fold(text: str) -> str:
+    return text.lower().replace("’", "'").translate(_FOLD)
+
+
+def _folded_index() -> dict[str, str]:
+    """Map an unaccented spelling onto the accented dictionary or override key."""
+    global _folded
+    if _folded is not None:
+        return _folded
+    load()
+    mapping: dict[str, str] = {}
+    assert _dict is not None
+    for key in OVERRIDES:
+        folded = _fold(key)
+        if folded != key:
+            mapping[folded] = key
+    for key in _dict:
+        folded = _fold(key)
+        if folded != key and folded not in mapping and folded not in OVERRIDES and folded not in _dict:
+            mapping[folded] = key
+    _folded = mapping
+    return mapping
+
+
 def entry(lemma: str) -> dict | None:
     load()
     key = lemma.lower().replace("’", "'")
     if key in OVERRIDES:
         return OVERRIDES[key]
     assert _dict is not None
-    return _dict.get(key)
+    found = _dict.get(key)
+    if found:
+        return found
+    target = _folded_index().get(_fold(key))
+    if not target:
+        return None
+    if target in OVERRIDES:
+        return OVERRIDES[target]
+    return _dict.get(target)
 
 
 def senses(lemma: str, limit: int = 3) -> list[str]:

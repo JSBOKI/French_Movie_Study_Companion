@@ -19,6 +19,13 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
 
+  const sceneLength = (scene) => {
+    if (scene.length_label) return scene.length_label;
+    const ms = Math.max(0, Number(scene.end_ms || 0) - Number(scene.start_ms || 0));
+    const minutes = Math.max(1, Math.round(ms / 60000));
+    return minutes === 1 ? "about 1 min" : "about " + minutes + " min";
+  };
+
   const clock = (ms) => {
     const total = Math.max(0, Math.floor(Number(ms) / 1000));
     const h = Math.floor(total / 3600);
@@ -217,7 +224,7 @@
     }
     const scenes = (movie.scenes || []).map((scene) => `
       <a class="scene-link" href="#/film/${id}/scene/${scene.idx}">
-        <span><strong>${esc(scene.title || "Scene " + scene.idx)}</strong><br><span class="meta">${clock(scene.start_ms)}–${clock(scene.end_ms)}</span></span>
+        <span><strong>${esc(scene.title || "Scene " + scene.idx)}</strong><br><span class="meta">${clock(scene.start_ms)}–${clock(scene.end_ms)} · ${esc(sceneLength(scene))}</span></span>
         <span class="chip">${scene.studied ? "studied" : "open"}</span>
       </a>`).join("");
     const banner = movie.status === "processing" || movie.status === "translating"
@@ -256,7 +263,7 @@
         <button class="btn-ghost" data-action="rebuild" data-id="${id}">Rebuild</button>
         <button class="btn-ghost" data-action="delete" data-id="${id}">Delete</button>
       </div>
-      <p class="meta">Subtitles stay on this machine. .srt, .vtt, and .ass/.ssa. A long film becomes a series of scenes, about 8–12 minutes, or a shorter cut when the dialogue pauses.</p>
+      <p class="meta">Subtitles stay on this machine. .srt, .vtt, and .ass/.ssa. A long film becomes a series of short scenes, usually a couple of minutes of dialogue, cut shorter when the dialogue pauses.</p>
       <div class="scene-list">${scenes || `<p class="lede">No scenes yet. Upload a French subtitle to build the lessons.</p>`}</div>
       ${subs}
     `, "films"))) root.dataset.movieId = String(id);
@@ -360,7 +367,7 @@
       return "Named speakers are split between Denise and Henri. A name that is not clearly male uses Denise.";
     }
     if (mode === "dashes") {
-      return "This subtitle marks speakers with dashes, so the voices alternate: Denise, then Henri.";
+      return "Dashes mark a speaker change, so Denise and Henri alternate when the speaker changes.";
     }
     return "This subtitle has no speaker names, so the drill uses one French voice, Denise.";
   }

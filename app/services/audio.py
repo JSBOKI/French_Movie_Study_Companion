@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,6 +10,9 @@ from app import config
 from app.db import one, session
 from app.services.lessons import key_lines
 from app.services.tts import concat_mp3, silence, synthesize
+
+# A dash after a space or at the start is a speaker change. Hyphens inside words are not.
+_DASH_TURN = re.compile(r"(?:^|(?<=\s))[-–—]\s*")
 
 
 def audio_root() -> Path:
@@ -62,16 +66,24 @@ def _dialogue(scene_id: int, lesson: dict) -> Path:
     work.mkdir(parents=True, exist_ok=True)
     lines = key_lines(lesson, limit=12)
     gap = silence(0.7, work / "gap-07.mp3")
-    for index, line in enumerate(lines):
-        speaker = _drill_speaker(line, index, lesson.get("voice_mode") or "single")
-        french = synthesize(line["text"], "fr", speaker=speaker)
+    turn_gap = silence(0.2, work / "gap-02.mp3")
+    groups = line_drill_turns(lines, lesson.get("voice_mode") or "single")
+    for line, turns in zip(lines, groups):
+        french = []
+        for text, speaker in turns:
+            french.append(synthesize(text, "fr", speaker=speaker))
+        if len(french) > 1:
+            spaced: list[Path] = []
+            for clip in french:
+                spaced.extend([clip, turn_gap])
+            french = spaced
         english_text = english_for_audio(line)
         pause = silence(_shadow_pause(line["text"]), work / f"pause-{int(_shadow_pause(line['text']) * 10):02d}.mp3")
         if english_text:
             english = synthesize(english_text, "en")
-            parts.extend([french, pause, english, gap, french, gap])
+            parts.extend([*french, pause, english, gap, *french, gap])
         else:
-            parts.extend([french, pause, french, gap])
+            parts.extend([*french, pause, *french, gap])
     dest = work / "dialogue.mp3"
     if not parts:
         raise ValueError("This scene has no lines to read aloud.")
@@ -105,12 +117,70 @@ def english_for_audio(line: dict) -> str:
     return (line.get("translation") or "").strip()
 
 
-def _drill_speaker(line: dict, index: int, mode: str) -> str | None:
-    if line.get("speaker"):
-        return line["speaker"]
-    if mode == "dashes":
-        return "Marc" if index % 2 else "Léa"
-    return None
+def speaker_turns(text: str) -> list[str]:
+    parts = [part.strip() for part in _DASH_TURN.split(text.strip())]
+    parts = [part for part in parts if part]
+    return parts or ([text.strip()] if text.strip() else [])
+
+
+def _starts_with_dash(text: str) -> bool:
+    return bool(re.match(r"\s*[-–—]", text))
+
+
+def _has_dash_turn(text: str) -> bool:
+    return bool(re.search(r"(?:^|\s)[-–—]\s*\S", text))
+
+
+def _flip(current: str | None) -> str:
+    if current == "Léa":
+        return "Marc"
+    if current == "Marc":
+        return "Léa"
+    return "Léa"
+
+
+def line_drill_turns(lines: list[dict], mode: str) -> list[list[tuple[str, str | None]]]:
+    """French turns for each cue. A new dash flips the voice; a plain line keeps it."""
+    current: str | None = None
+    groups: list[list[tuple[str, str | None]]] = []
+    for line in lines:
+        text = line.get("text") or ""
+        named = (line.get("speaker") or "").strip()
+        dashed = _has_dash_turn(text)
+        if named and not dashed:
+            groups.append([(text, named)])
+            continue
+        if not dashed:
+            if mode != "dashes":
+                groups.append([(text, None)])
+                continue
+            if current is None:
+                current = "Léa"
+            groups.append([(text, current)])
+            continue
+        parts = speaker_turns(text)
+        turns: list[tuple[str, str | None]] = []
+        if _starts_with_dash(text):
+            for part in parts:
+                current = _flip(current)
+                turns.append((part, current))
+        else:
+            first, *rest = parts
+            if current is None:
+                current = "Léa"
+            turns.append((first, current))
+            for part in rest:
+                current = _flip(current)
+                turns.append((part, current))
+        groups.append(turns)
+    return groups
+
+
+def drill_voices(lines: list[dict], mode: str) -> list[tuple[str, str | None]]:
+    voices: list[tuple[str, str | None]] = []
+    for group in line_drill_turns(lines, mode):
+        voices.extend(group)
+    return voices
 
 
 def _shadow_pause(text: str) -> float:

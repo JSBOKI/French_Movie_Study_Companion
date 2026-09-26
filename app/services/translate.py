@@ -37,6 +37,114 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("’", "'").replace("‘", "'").strip())
 
 
+_AVANT_DE = re.compile(
+    r"\bavant d['e]\s+(vous|te|t'|me|m'|nous|lui|leur|le|la|les|l')\s+\S",
+    re.I,
+)
+_GET_HIGH = re.compile(
+    r"\b(?:get|getting|got|gets)\s+(?:high|stoned|wasted|smashed|wrecked)\b",
+    re.I,
+)
+_DRUG_WORD = re.compile(r"\b(?:dope|drugs|stoned|wasted|smashed|wrecked|high)\b", re.I)
+_SEED_WORD = re.compile(r"\b(?:seeds|seed|pips|pip)\b", re.I)
+_FRUIT = re.compile(r"\b(?:pommes?|raisins?|oranges?|fruits?|melons?)\b", re.I)
+_GERUND = {
+    "sent": "sending", "send": "sending",
+    "went": "going", "go": "going",
+    "came": "coming", "come": "coming",
+    "made": "making", "make": "making",
+    "took": "taking", "take": "taking",
+    "gave": "giving", "give": "giving",
+    "got": "getting", "get": "getting",
+    "left": "leaving", "leave": "leaving",
+    "said": "saying", "say": "saying",
+    "saw": "seeing", "see": "seeing",
+    "had": "having", "have": "having",
+    "did": "doing", "do": "doing",
+    "put": "putting", "let": "letting", "cut": "cutting",
+    "brought": "bringing", "bring": "bringing",
+    "told": "telling", "tell": "telling",
+    "found": "finding", "find": "finding",
+    "kept": "keeping", "keep": "keeping",
+    "called": "calling", "call": "calling",
+}
+_CLITIC_EN = {
+    "vous": "you", "te": "you", "t'": "you",
+    "me": "me", "m'": "me", "nous": "us",
+    "lui": "him", "leur": "them",
+    "le": "him", "la": "her", "les": "them", "l'": "it",
+}
+
+
+def _gerund(verb: str) -> str:
+    low = verb.lower()
+    if low in _GERUND:
+        return _GERUND[low]
+    if low.endswith("ing"):
+        return low
+    if low.endswith("ie"):
+        return low[:-2] + "ying"
+    if low.endswith("e") and not low.endswith("ee"):
+        return low[:-1] + "ing"
+    return low + "ing"
+
+
+def polish_translation(french: str, english: str) -> str:
+    """Post-edit machine English for a few subtitle idioms. Does not call a translator."""
+    if not french or not english:
+        return english
+    english = _fix_defoncer(french, english)
+    english = _fix_avant(french, english)
+    english = _fix_pepin(french, english)
+    return english
+
+
+def _effort_owner(french: str) -> str:
+    if re.search(r"\bje\b|\bj'", french, re.I):
+        return "my"
+    if re.search(r"\btu\b|\bt'", french, re.I):
+        return "your"
+    return "our"
+
+
+def _fix_defoncer(french: str, english: str) -> str:
+    if not re.search(r"défonc", french, re.I):
+        return english
+    repl = f"give it {_effort_owner(french)} all"
+    updated = _GET_HIGH.sub(repl, english)
+    if updated != english:
+        return updated
+    if _DRUG_WORD.search(english) and "give it" not in english.lower():
+        return _DRUG_WORD.sub(repl, english, count=1)
+    return english
+
+
+def _fix_avant(french: str, english: str) -> str:
+    match = _AVANT_DE.search(french)
+    if not match:
+        return english
+    pronoun = _CLITIC_EN.get(match.group(1).lower(), "you")
+
+    def repl(found: re.Match) -> str:
+        return f"Before {_gerund(found.group(1))} {pronoun}"
+
+    return re.sub(r"\bBefore you (\w+)", repl, english, count=1)
+
+
+def _fix_pepin(french: str, english: str) -> str:
+    if not re.search(r"pépin", french, re.I) or _FRUIT.search(french):
+        return english
+
+    def snag(found: re.Match) -> str:
+        return "snags" if found.group(0).lower().endswith("s") else "snag"
+
+    english = _SEED_WORD.sub(snag, english)
+    if re.search(r"\bnombre\b", french, re.I) and re.search(r"\bnumber\b", english, re.I):
+        if not re.search(r"\b(?:snags?|hitches|hitch|glitches|glitch|problems|problem)\b", english, re.I):
+            english = re.sub(r"\bnumber\b", "number of snags", english, count=1, flags=re.I)
+    return english
+
+
 _SENTENCE = re.compile(r"[^.!?…]+[.!?…]*")
 
 
@@ -47,12 +155,18 @@ def sentence_pieces(text: str) -> list[str]:
     return parts or [normalize(text)]
 
 
+def _source_text(line: Line | dict) -> str:
+    if isinstance(line, dict):
+        return line.get("corrected_text") or line.get("text") or ""
+    return line.corrected_text or line.text
+
+
 def translate_line(line: Line) -> None:
     """Fill a line from the seed or a real cached translation. Never calls the network."""
-    key = normalize(line.text)
+    key = normalize(_source_text(line))
     seeded = _seed().get(key)
     if seeded:
-        line.translation = seeded
+        line.translation = polish_translation(key, seeded)
         line.translation_kind = "english"
         return
     cached = one(
@@ -60,7 +174,7 @@ def translate_line(line: Line) -> None:
         (key,),
     )
     if cached and cached["target"].strip():
-        line.translation = cached["target"]
+        line.translation = polish_translation(key, cached["target"])
         line.translation_kind = "english"
         return
     line.translation = ""
@@ -84,7 +198,7 @@ def translate_movie(movie_id: int, progress) -> None:
         for line in lesson["lines"]:
             if line.get("translation_kind") == "english" and line.get("translation"):
                 continue
-            for piece in sentence_pieces(line["text"]):
+            for piece in sentence_pieces(_source_text(line)):
                 key = normalize(piece)
                 if key in seen:
                     continue
@@ -105,7 +219,7 @@ def translate_movie(movie_id: int, progress) -> None:
             if not translated:
                 break
             for source, target in zip(chunk, translated):
-                target = target.strip()
+                target = polish_translation(source, target.strip())
                 if target:
                     done[normalize(source)] = target
                     _store(normalize(source), target, "argos")
@@ -128,24 +242,38 @@ def _mymemory_fill(pending: list[str], done: dict[str, str], movie_id: int, prog
             progress(movie_id, "translating", f"Asking MyMemory ({index} of {len(pending)})")
         translated = _mymemory(normalize(text))
         if translated:
+            translated = polish_translation(text, translated)
             done[normalize(text)] = translated
             _store(normalize(text), translated, "mymemory")
 
 
 def _write_back(parsed: list[tuple[int, dict]], done: dict[str, str]) -> None:
     for scene_id, lesson in parsed:
+        by_fr: dict[str, str] = {}
         for line in lesson["lines"]:
-            english = _join_translation(line["text"], done)
+            source = _source_text(line)
+            english = _join_translation(source, done)
             if english:
-                line["translation"] = english
+                line["translation"] = polish_translation(source, english)
                 line["translation_kind"] = "english"
+            elif line.get("translation_kind") == "english" and line.get("translation"):
+                line["translation"] = polish_translation(source, line["translation"])
             elif line.get("translation_kind") != "english":
                 line["translation"] = _gloss_line(line)
                 line["translation_kind"] = "gloss"
+            if line.get("translation_kind") == "english" and line.get("translation"):
+                by_fr[line.get("text") or ""] = line["translation"]
         for item in lesson.get("vocabulary") or []:
-            english = _join_translation(item.get("example_fr") or "", done)
-            if english:
-                item["example_en"] = english
+            english = by_fr.get(item.get("example_fr") or "") or _join_translation(item.get("example_fr") or "", done)
+            if english and item.get("example_fr") in by_fr:
+                item["example_en"] = by_fr[item["example_fr"]]
+            elif english:
+                item["example_en"] = polish_translation(item.get("example_fr") or "", english)
+        for note in lesson.get("grammar") or []:
+            for example in note.get("examples") or []:
+                english = by_fr.get(example.get("fr") or "")
+                if english:
+                    example["en"] = english
         from app import config
 
         if config.llm_api_key():

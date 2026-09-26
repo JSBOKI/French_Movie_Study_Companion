@@ -126,6 +126,10 @@ def get_movie(movie_id: int) -> dict:
         "SELECT id, idx, start_ms, end_ms, title, studied FROM scenes WHERE movie_id = ? ORDER BY idx",
         (movie_id,),
     )
+    from app.services.scenes import lesson_length
+
+    for scene in movie["scenes"]:
+        scene["length_label"] = lesson_length(scene["start_ms"], scene["end_ms"])
     return movie
 
 

@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
-from app.services.analyze import Line, Tok, analyze_line, display_noun, pos_label
+from app.services.analyze import Line, Tok, analyze_line, display_noun, plural_headword, pos_label
 from app.services.grammar import Note, detect_grammar
-from app.services.lexicon import SKIP_LEMMAS, entry, level_for, level_label, rank_of
+from app.services.lexicon import SKIP_LEMMAS, entry, level_for, level_label, noun_phrase, rank_of
+from app.services.scenes import lesson_length
 from app.services.subtitles import Cue
 from app.services.translate import translate_line
 
@@ -18,6 +19,7 @@ EXPRESSIONS = [
     ("s'il vous plaît", "s'il vous plaît", "please (polite)", "s'il vous plaît"),
     ("s'il te plaît", "s'il te plaît", "please (to a friend)", "s'il te plaît"),
     ("qu'est-ce qu'il y a", "qu'est-ce qu'il y a", "what's the matter?", "qu'est-ce qu'il y a"),
+    ("qu'est-ce qui", "qu'est-ce qui", "what (question phrase)", "qu'est-ce qui"),
     ("qu'est-ce que", "qu'est-ce que", "what (question phrase)", "qu'est-ce que"),
     ("tout à l'heure", "tout à l'heure", "a moment ago, or in a little while", "tout à l'heure"),
     ("d'accord", "d'accord", "OK, all right", "d'accord"),
@@ -26,10 +28,15 @@ EXPRESSIONS = [
     ("tout de même", "tout de même", "all the same, even so", "tout de même"),
     ("je vous en supplie", "je vous en supplie", "I'm begging you", "je vous en supplie"),
     ("tandis que", "tandis que", "whereas, while", "tandis que"),
-    ("qu'est-ce que", "qu'est-ce que", "what (question phrase)", "qu'est-ce que"),
-    ("qu'est-ce", "qu'est-ce", "what", "qu'est-ce"),
     ("quelqu'un", "quelqu'un", "someone", "quelqu'un"),
-    ("faire attention", "faire attention", "to be careful, to pay attention", "faire attention"),
+    ("faire attention à", "faire attention (à)", "to be careful; to pay attention", "faire attention"),
+    ("faire attention", "faire attention (à)", "to be careful; to pay attention", "faire attention"),
+    ("s'occuper de", "s'occuper de", "to take care of; to deal with", "s'occuper de"),
+    ("se promener", "se promener", "to go for a walk", "se promener"),
+    ("on a été coupés", "on a été coupé", "we got cut off", "on a été coupé"),
+    ("on a été coupées", "on a été coupé", "we got cut off", "on a été coupé"),
+    ("on a été coupée", "on a été coupé", "we got cut off", "on a été coupé"),
+    ("on a été coupé", "on a été coupé", "we got cut off", "on a été coupé"),
     ("en pleine forme", "en pleine forme", "in great shape", "en pleine forme"),
 ]
 
@@ -57,7 +64,7 @@ def build_scene_lesson(
         "scene_index": scene_index,
         "scene_count": scene_count,
         "title": title,
-        "time_label": f"{_clock(start)}–{_clock(end)}",
+        "time_label": f"{_clock(start)}–{_clock(end)} · {lesson_length(start, end)}",
         "start_ms": start,
         "end_ms": end,
         "overview": overview,
@@ -280,15 +287,96 @@ def _keep_token(tok: Tok) -> bool:
     return True
 
 
+# Conjugated forms that are not a single fixed spelling in the subtitle.
+_EXPR_RES = [
+    (
+        re.compile(r"\b(?:m'|t'|s'|me |te |se |nous |vous )occup\w*\s+d['e]", re.I),
+        "s'occuper de",
+        "to take care of; to deal with",
+        "s'occuper de",
+    ),
+    (
+        re.compile(r"\b(?:m'|t'|s'|me |te |se |nous |vous )prom[eè]n\w*", re.I),
+        "se promener",
+        "to go for a walk",
+        "se promener",
+    ),
+    (
+        re.compile(r"\bon a été coupée?s?\b", re.I),
+        "on a été coupé",
+        "we got cut off",
+        "on a été coupé",
+    ),
+    (
+        re.compile(r"\b(?:faire|fais|fait|faisons|faites|font)\s+attention(?:\s+à\b)?", re.I),
+        "faire attention (à)",
+        "to be careful; to pay attention",
+        "faire attention",
+    ),
+]
+
+
+def _pattern_in(hay: str, pattern: str, patterns: list[tuple]) -> bool:
+    """Match a whole expression. A shorter prefix such as qu'est-ce does not win."""
+    start = 0
+    plen = len(pattern)
+    while True:
+        index = hay.find(pattern, start)
+        if index < 0:
+            return False
+        before = hay[index - 1] if index else ""
+        after = hay[index + plen : index + plen + 1]
+        if (before and before.isalnum()) or (after and after.isalnum()):
+            start = index + 1
+            continue
+        if any(len(other) > plen and hay.startswith(other, index) for other, *_rest in patterns):
+            start = index + 1
+            continue
+        return True
+
+
 def _expressions(lines: list[Line], taught: set[str], known: set[str]) -> list[dict]:
     found = []
     seen = set()
-    for pattern, lemma, gloss, audio in EXPRESSIONS:
+    patterns = sorted(EXPRESSIONS, key=lambda item: -len(item[0]))
+    for pattern, lemma, gloss, audio in patterns:
         if lemma.lower() in seen or lemma.lower() in taught or lemma.lower() in known:
             continue
         for line in lines:
             hay = line.text.lower().replace("’", "'")
-            if pattern not in hay:
+            if not _pattern_in(hay, pattern, patterns):
+                continue
+            found.append(
+                {
+                    "lemma": lemma,
+                    "display": lemma,
+                    "indefinite": "",
+                    "pos": "EXPR",
+                    "pos_label": "expression",
+                    "gender": "",
+                    "gender_label": "",
+                    "gloss": gloss,
+                    "level": "A1",
+                    "level_label": "A1 · very common",
+                    "count": 1,
+                    "form_note": "",
+                    "example_fr": line.text,
+                    "example_en": line.translation,
+                    "audio_text": audio,
+                    "slang": None,
+                    "expression": True,
+                }
+            )
+            seen.add(lemma.lower())
+            break
+    for regex, lemma, gloss, audio in _EXPR_RES:
+        if lemma.lower() in seen or lemma.lower() in taught or lemma.lower() in known:
+            continue
+        for line in lines:
+            if line.typos:
+                continue
+            hay = line.text.lower().replace("’", "'")
+            if not regex.search(hay):
                 continue
             found.append(
                 {
@@ -338,8 +426,12 @@ def _count_carried(lines: list[Line], taught: set[str]) -> int:
     return len(seen)
 
 
+def _point_name(title: str) -> str:
+    return re.sub(r"^Review:\s*", "", title).strip()
+
+
 def _overview(index: int, vocab: list[dict], grammar: list[Note], carried: int) -> str:
-    titles = [note.title.split(":")[0] for note in grammar[:3]]
+    titles = [_point_name(note.title) for note in grammar[:3]]
     grammar_bit = ""
     if titles:
         grammar_bit = " You'll work on " + ", ".join(titles) + "."
@@ -359,6 +451,7 @@ def _line_json(line: Line) -> dict:
         "start_ms": line.start_ms,
         "end_ms": line.end_ms,
         "text": line.text,
+        "corrected_text": line.corrected_text or line.text,
         "translation": line.translation,
         "translation_kind": line.translation_kind,
         "tip": line.tip,
@@ -402,23 +495,61 @@ def _card(item: dict, scene_index: int) -> dict:
     }
 
 
+_NOT_TITLE = {
+    "voilà", "voila", "voici", "an", "ans",
+    "janvier", "février", "fevrier", "mars", "avril", "mai", "juin",
+    "juillet", "août", "aout", "septembre", "octobre", "novembre", "décembre", "decembre",
+}
+
+
+def _title_label(lemma: str, line_gender: str | None) -> str | None:
+    """Dictionary gender, with an article. Pendule keeps the article in the line."""
+    key = (lemma or "").lower()
+    if not key or key in _NOT_TITLE:
+        return None
+    found = entry(key) or {}
+    if found.get("p") not in {None, "", "NOUN"}:
+        return None
+    if key == "pendule":
+        gender = line_gender or ""
+    else:
+        gender = found.get("g") or ""
+    if gender not in {"m", "f"}:
+        return None
+    if plural_headword(key):
+        return f"les {key}"
+    phrase = noun_phrase(key, gender)
+    if not phrase:
+        return None
+    return phrase[0]
+
+
 def _scene_title(vocab: list[dict], lines: list[Line], index: int) -> str:
-    nouns = [item["display"] for item in vocab if item.get("pos") == "NOUN"]
-    seen = {noun.lower() for noun in nouns}
-    # Later scenes may teach no new nouns. Name them from the dialogue anyway.
-    for line in lines:
-        for tok in line.tokens:
-            if tok.pos != "NOUN" or tok.role == "typo" or not tok.lemma:
-                continue
-            label = display_noun(tok.lemma, tok.gender)[0] if tok.gender else tok.lemma
-            if label.lower() in seen:
-                continue
-            nouns.append(label)
-            seen.add(label.lower())
-            if len(nouns) >= 2:
-                break
+    nouns: list[str] = []
+    seen: set[str] = set()
+
+    def add(lemma: str, line_gender: str | None) -> None:
+        label = _title_label(lemma, line_gender)
+        if not label or label.lower() in seen:
+            return
+        nouns.append(label)
+        seen.add(label.lower())
+
+    for item in vocab:
+        if item.get("pos") == "NOUN":
+            add(item.get("lemma") or "", item.get("gender") or "")
         if len(nouns) >= 2:
             break
+    if len(nouns) < 2:
+        for line in lines:
+            for tok in line.tokens:
+                if tok.pos != "NOUN" or tok.role == "typo" or not tok.lemma:
+                    continue
+                add(tok.lemma, tok.gender)
+                if len(nouns) >= 2:
+                    break
+            if len(nouns) >= 2:
+                break
     nouns = nouns[:2]
     if len(nouns) >= 2:
         title = f"{nouns[0]} et {nouns[1]}"
@@ -433,7 +564,7 @@ def _scene_title(vocab: list[dict], lines: list[Line], index: int) -> str:
 def _voice_mode(lines: list[Line]) -> str:
     if any(line.speaker for line in lines):
         return "named"
-    if any(line.text.lstrip().startswith(("-", "–", "—")) for line in lines):
+    if any(re.search(r"(?:^|\s)[-–—]\s*\S", line.text) for line in lines):
         return "dashes"
     return "single"
 
