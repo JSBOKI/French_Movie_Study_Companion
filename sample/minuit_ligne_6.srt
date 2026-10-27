@@ -1,0 +1,172 @@
+1
+00:00:08,000 --> 00:00:11,800
+Léa : T'as vu l'heure ? Le dernier métro est déjà parti.
+
+2
+00:00:14,400 --> 00:00:18,200
+Marc : J'sais pas. J'étais encore dans le couloir. Y'a plus personne.
+
+3
+00:00:20,800 --> 00:00:24,600
+Léa : On a raté le train. Il était juste là, et maintenant il est parti.
+
+4
+00:00:27,200 --> 00:00:31,000
+Marc : J'ai couru, mais la porte s'est fermée devant moi. Je suis vraiment désolé.
+
+5
+00:00:33,600 --> 00:00:37,400
+Léa : C'est pas grave. Enfin... si, un peu. J'habite loin d'ici.
+
+6
+00:00:40,000 --> 00:00:43,800
+Marc : Moi aussi. J'habite près du canal, à l'autre bout de la ligne.
+
+7
+00:00:46,400 --> 00:00:50,200
+Léa : Il faut qu'on trouve un taxi. Tu connais un endroit ouvert à cette heure ?
+
+8
+00:00:52,800 --> 00:00:56,600
+Marc : Je crois qu'il y a un café au coin de la rue. On peut demander.
+
+9
+00:00:59,200 --> 00:01:03,000
+Léa : D'accord. Mais j'ai pas beaucoup d'argent sur moi. T'as une carte ?
+
+10
+00:01:05,600 --> 00:01:09,400
+Marc : Oui, j'ai ma carte. Te fais pas de souci. Je t'invite.
+
+11
+00:01:12,000 --> 00:01:15,800
+Léa : Merci. T'es gentil. Quand j'étais petite, ma mère me disait toujours de rentrer avant minuit.
+
+12
+00:01:18,400 --> 00:01:22,200
+Marc : Et tu rentrais ? Moi, je restais dehors. Mes parents ne disaient rien.
+
+13
+00:01:24,800 --> 00:01:28,600
+Léa : J'sais pas pourquoi je t'ai attendu. Le quai était vide, et il faisait froid.
+
+14
+00:01:31,200 --> 00:01:35,000
+Marc : Parce qu'on est amis, non ? On se connaît depuis le lycée.
+
+15
+00:01:37,600 --> 00:01:41,400
+Léa : Depuis le lycée, oui. Tu te souviens du prof de français ? Il voulait qu'on lise tout le livre.
+
+16
+00:01:44,000 --> 00:01:47,800
+Marc : Je m'en souviens. J'ai pas lu le dernier chapitre. C'était trop long.
+
+17
+00:01:50,400 --> 00:01:54,200
+Léa : Tu lisais jamais. Tu regardais par la fenêtre et tu dessinais des trains.
+
+18
+00:01:56,800 --> 00:02:00,600
+Marc : C'est vrai. J'aimais les trains. J'aime toujours ça, d'ailleurs.
+
+19
+00:02:03,200 --> 00:02:07,000
+Léa : Allez, viens. S'il te plaît. On va au café avant qu'il ferme.
+
+20
+00:02:09,600 --> 00:02:13,400
+Marc : Attends. Tu entends quelque chose ? Y'a un autre train, ou c'est le vent ?
+
+21
+00:02:16,000 --> 00:02:19,800
+Léa : C'est le vent. Il n'y a plus de train ce soir. On y va ?
+
+22
+00:02:50,000 --> 00:02:53,800
+Léa : Le café est encore ouvert. Regarde, il y a de la lumière.
+
+23
+00:02:56,400 --> 00:03:00,200
+Marc : Ce quartier est un peu chelou à cette heure, non ?
+
+24
+00:03:02,800 --> 00:03:06,600
+Léa : Chelou ? T'es ouf. Il est juste calme.
+
+25
+00:03:09,200 --> 00:03:13,000
+Marc : D'accord, entre. Je vais demander au serveur s'il reste une table près de la fenêtre.
+
+26
+00:03:15,600 --> 00:03:19,400
+Léa : Il pleut maintenant. T'as vu la pluie ? J'ai pas de parapluie.
+
+27
+00:03:22,000 --> 00:03:25,800
+Marc : Prends ma veste. Elle est un peu mouillée, mais elle est chaude.
+
+28
+00:03:28,400 --> 00:03:32,200
+Léa : Merci. Tu veux un chocolat chaud ? Moi, je prends un thé.
+
+29
+00:03:34,800 --> 00:03:38,600
+Marc : Oui, bonne idée. Il faut qu'on parle de demain aussi.
+
+30
+00:03:41,200 --> 00:03:45,000
+Léa : Demain ? Je travaille tôt. Je veux que tu m'écoutes une seconde.
+
+31
+00:03:47,600 --> 00:03:51,400
+Marc : Je t'écoute. Qu'est-ce qu'il y a ?
+
+32
+00:03:54,000 --> 00:03:57,800
+Léa : J'aimerais qu'on se revoie. Pas seulement quand on rate un train.
+
+33
+00:04:00,400 --> 00:04:04,200
+Marc : Moi aussi. Tu me donnes ton numéro ?
+
+34
+00:04:06,800 --> 00:04:10,600
+Léa : Oui. Attends, mon téléphone est au fond du sac. Je le cherche.
+
+35
+00:04:13,200 --> 00:04:17,000
+Marc : Le serveur arrive. Bonsoir, monsieur. Deux boissons chaudes, s'il vous plaît.
+
+36
+00:04:19,600 --> 00:04:23,400
+Léa : Et un verre d'eau, s'il vous plaît. Merci beaucoup.
+
+37
+00:04:26,000 --> 00:04:29,800
+Marc : Tu souris. Tout à l'heure tu étais fâchée.
+
+38
+00:04:32,400 --> 00:04:36,200
+Léa : J'étais fatiguée. Maintenant je suis bien ici, avec toi.
+
+39
+00:04:38,800 --> 00:04:42,600
+Marc : On reste encore un peu ? Jusqu'à ce que la pluie s'arrête.
+
+40
+00:04:45,200 --> 00:04:49,000
+Léa : D'accord. Mais je dois être rentrée avant le matin. Promis ?
+
+41
+00:04:51,600 --> 00:04:55,400
+Marc : Promis. Je te raccompagne en taxi. L'addition, on la partage ?
+
+42
+00:04:58,000 --> 00:05:01,800
+Léa : Non, tu m'as invitée. La prochaine fois, c'est moi.
+
+43
+00:05:04,400 --> 00:05:08,200
+Marc : La prochaine fois. J'aime bien cette phrase.
+
