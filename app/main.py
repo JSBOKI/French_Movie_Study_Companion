@@ -14,16 +14,18 @@ from pydantic import BaseModel, Field
 
 from app import config
 from app.db import init_db, one, rows, session
+from app.teacher import router as teacher_router
 from app.services import anki_export, audio, metadata, opensubtitles, pipeline, srs, tts
 
 STATIC = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="Bobine", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.include_router(teacher_router)  # Bookshelf pop-up teacher: own origin allowlist + rate limit
 
 _COOKIE = "bobine_session"
 _COOKIE_MAX_AGE = 180 * 24 * 3600
-_OPEN_PATHS = {"/api/health", "/login"}
+_OPEN_PATHS = {"/api/health", "/login", "/api/teacher", "/api/teacher/health"}
 
 
 def _session_token(password: str) -> str:
